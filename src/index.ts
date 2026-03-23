@@ -8,8 +8,20 @@ const agent = new Agent(provider);
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
-console.log('Agent ready. Press Enter to send. Paste multi-line code — it sends as one message.');
-console.log('Type /ml to switch to multi-line mode (use --- to send). Ctrl+C to exit.');
+const c = {
+  reset:    '\x1b[0m',
+  bold:     '\x1b[1m',
+  dim:      '\x1b[2m',
+  cyan:     '\x1b[36m',
+  yellow:   '\x1b[33m',
+};
+
+function label(text: string, style: string): string {
+  return `${style}${text}${c.reset}`;
+}
+
+console.log(label('Agent ready.', c.bold), 'Press Enter to send. Paste multi-line code — it sends as one message.');
+console.log(`Type ${label('/ml', c.bold)} to switch to multi-line mode (use ${label('---', c.bold)} to send). Ctrl+C to exit.\n`);
 
 const buffer: string[] = [];
 let isProcessing = false;
@@ -19,7 +31,8 @@ let multilineMode = false;
 const PASTE_WINDOW_MS = 50;
 
 function getPrompt(): string {
-  return multilineMode ? 'ml> ' : '> ';
+  const indicator = multilineMode ? 'ml' : 'you';
+  return `${c.dim}${indicator}>${c.reset} `;
 }
 
 async function submit(): Promise<void> {
@@ -32,13 +45,14 @@ async function submit(): Promise<void> {
     return;
   }
 
+  process.stdout.write(`\n${label('agent:', c.bold + c.cyan)} `);
   rl.setPrompt('');
   isProcessing = true;
   try {
     await agent.chat(input, (chunk) => process.stdout.write(chunk));
-    process.stdout.write('\n');
+    process.stdout.write('\n\n');
   } catch (err) {
-    console.error('Error:', err instanceof Error ? err.message : err);
+    console.error(label('Error:', c.bold + c.yellow), err instanceof Error ? err.message : err);
   } finally {
     isProcessing = false;
     rl.setPrompt(getPrompt());
@@ -52,14 +66,13 @@ rl.prompt();
 rl.on('line', (line) => {
   if (isProcessing) return;
 
-  // toggle command
   if (line.trim() === '/ml') {
     multilineMode = !multilineMode;
     buffer.length = 0;
     if (submitTimer) { clearTimeout(submitTimer); submitTimer = null; }
     console.log(multilineMode
-      ? 'Multi-line mode ON — type --- on a new line to send.'
-      : 'Multi-line mode OFF — Enter sends, paste auto-detected.');
+      ? `${label('Multi-line mode ON', c.bold)} — type ${label('---', c.bold)} on a new line to send.`
+      : `${label('Multi-line mode OFF', c.bold)} — Enter sends, paste auto-detected.`);
     rl.setPrompt(getPrompt());
     rl.prompt();
     return;
@@ -70,7 +83,7 @@ rl.on('line', (line) => {
       submit();
     } else {
       buffer.push(line);
-      rl.setPrompt('... ');
+      rl.setPrompt(`${c.dim}...${c.reset} `);
       rl.prompt();
     }
   } else {

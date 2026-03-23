@@ -28,13 +28,18 @@ npx ts-node src/index.ts
 
 ## Usage
 
+User input and agent response are visually separated with labels and colors:
+
 ```
-Agent ready. Press Enter to send. Paste multi-line code — it sends as one message.
-Type /ml to switch to multi-line mode (use --- to send). Ctrl+C to exit.
-> Hello!
-Hi! How can I help you today?
+you> Hello!
+
+agent: Hi! How can I help you today?
+
+you>
 ```
 
+- `you>` — dim prompt for user input
+- `agent:` — bold cyan label before each response
 - Responses stream token-by-token as they arrive
 - Conversation history is preserved for the entire session
 - Press `Ctrl+C` to exit
@@ -45,11 +50,13 @@ Hi! How can I help you today?
 - **Paste multi-line code** — detected automatically, sends as one message (blank lines preserved)
 
 ```
-> Here is my function, review it:
+you> Here is my function, review it:
 function fetchUser(id) {
   return fetch('/users/' + id).then(r => r.json())
 }
 ← sends automatically after paste
+
+agent: Here's my review...
 ```
 
 ### Multi-line mode
@@ -58,13 +65,15 @@ Type `/ml` to toggle. Prompt changes to `ml>`. Use `---` on its own line to send
 Type `/ml` again to go back to normal mode.
 
 ```
-> /ml
+you> /ml
 Multi-line mode ON — type --- on a new line to send.
+
 ml> First paragraph.
 ...
 ... Second paragraph after an empty line.
 ... ---
-← sends everything above as one message
+
+agent: ...
 ```
 
 Use this mode when you need to manually type a message with empty lines.
