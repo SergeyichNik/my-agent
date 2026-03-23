@@ -45,7 +45,7 @@ async function submit(): Promise<void> {
     return;
   }
 
-  process.stdout.write(`\n${label('agent:', c.bold + c.cyan)} `);
+  process.stdout.write(`\n${label('agent:', c.bold + c.cyan)}\n`);
   rl.setPrompt('');
   isProcessing = true;
   try {
