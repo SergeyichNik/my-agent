@@ -14,6 +14,7 @@ export const config = {
   apiKey: requireEnv('LLM_API_KEY'),
   model: requireEnv('LLM_MODEL'),
   baseUrl: requireEnv('LLM_BASE_URL'),
+  sessionsDir: process.env['SESSIONS_DIR'] ?? './sessions',
 };
 
 export const SYSTEM_PROMPT = 'You are a helpful assistant.';

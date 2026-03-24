@@ -55,7 +55,9 @@ you>
 
 - `you>` — dim prompt for user input
 - `agent:` — bold cyan label before each response
+- Braille spinner while waiting for the first token
 - Responses stream token-by-token as they arrive
+- Dim separator line printed after each response
 - Conversation history is saved automatically after each response
 - Press `Ctrl+C` to exit
 

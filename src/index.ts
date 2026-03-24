@@ -1,5 +1,4 @@
 import * as readline from 'readline';
-import * as os from 'os';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { config } from './config';
@@ -9,11 +8,13 @@ import { JsonSessionStorage } from './storage/json';
 import { Session } from './types';
 
 const c = {
-  reset:    '\x1b[0m',
-  bold:     '\x1b[1m',
-  dim:      '\x1b[2m',
-  cyan:     '\x1b[36m',
-  yellow:   '\x1b[33m',
+  reset:  '\x1b[0m',
+  bold:   '\x1b[1m',
+  dim:    '\x1b[2m',
+  cyan:   '\x1b[36m',
+  yellow: '\x1b[33m',
+  green:  '\x1b[32m',
+  red:    '\x1b[31m',
 };
 
 function label(text: string, style: string): string {
@@ -38,6 +39,24 @@ function defaultSessionName(): string {
   return `session-${date}-${shortId}`;
 }
 
+function startSpinner(): () => void {
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  let i = 0;
+  const render = () =>
+    process.stdout.write(`\r${label('agent:', c.bold + c.cyan)} ${frames[i++ % frames.length]}`);
+  render();
+  const timer = setInterval(render, 80);
+  return () => {
+    clearInterval(timer);
+    process.stdout.write('\x1b[2K\r');
+  };
+}
+
+function printSeparator(): void {
+  const width = Math.min(process.stdout.columns ?? 60, 60);
+  process.stdout.write(`${c.dim}${'─'.repeat(width)}${c.reset}\n\n`);
+}
+
 function promptNewSession(rl: readline.Interface): Promise<Session> {
   const defaultName = defaultSessionName();
   return new Promise((resolve) => {
@@ -57,10 +76,13 @@ function promptNewSession(rl: readline.Interface): Promise<Session> {
 function pickSession(rl: readline.Interface, sessions: Session[]): Promise<Session> {
   console.log('\nSessions:');
   sessions.forEach((s, i) => {
-    const msgs = `${s.messageCount} message${s.messageCount === 1 ? '' : 's'}`;
-    console.log(`  [${i + 1}] ${s.name} (${msgs}, last: ${relativeTime(s.lastSavedAt)})`);
+    const msgs = `${s.messageCount} msg`;
+    const num  = label(`[${i + 1}]`, c.bold + c.cyan);
+    const name = label(s.name, c.bold);
+    const meta = label(`(${msgs}, last: ${relativeTime(s.lastSavedAt)})`, c.dim);
+    console.log(`  ${num} ${name} ${meta}`);
   });
-  console.log(`  [n] Start new session\n`);
+  console.log(`  ${label('[n]', c.bold + c.green)} ${label('Start new session', c.dim)}\n`);
 
   return new Promise((resolve) => {
     const ask = () => {
@@ -88,7 +110,7 @@ function pickSession(rl: readline.Interface, sessions: Session[]): Promise<Sessi
 
 async function main() {
   const provider = new DeepSeekProvider(config);
-  const storage = new JsonSessionStorage(path.join(os.homedir(), '.my-agent', 'sessions'));
+  const storage = new JsonSessionStorage(path.resolve(config.sessionsDir));
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
   const sessions = await storage.listSessions();
@@ -100,10 +122,11 @@ async function main() {
 
   if (session.messages.length > 0) {
     agent.loadHistory(session.messages);
-    console.log(`\nResuming '${session.name}' — ${session.messages.length} messages loaded.`);
-  } else {
-    console.log(`\nStarted session '${session.name}'.`);
   }
+
+  const msgCount = session.messages.length;
+  const countStr = msgCount > 0 ? ` ${label(`· ${msgCount} messages loaded`, c.dim)}` : '';
+  console.log(`\n${label('◆', c.bold + c.cyan)} ${label(session.name, c.bold)}${countStr}`);
 
   console.log('\n' + label('Agent ready.', c.bold), 'Press Enter to send. Paste multi-line code — it sends as one message.');
   console.log(`Type ${label('/ml', c.bold)} to switch to multi-line mode (use ${label('---', c.bold)} to send). Ctrl+C to exit.\n`);
@@ -130,14 +153,28 @@ async function main() {
       return;
     }
 
-    process.stdout.write(`\n${label('agent:', c.bold + c.cyan)}\n`);
     rl.setPrompt('');
     isProcessing = true;
+    process.stdout.write('\n');
+
+    const stopSpinner = startSpinner();
+    let headerPrinted = false;
+
     try {
-      await agent.chat(input, (chunk) => process.stdout.write(chunk));
-      process.stdout.write('\n\n');
+      await agent.chat(input, (chunk) => {
+        if (!headerPrinted) {
+          headerPrinted = true;
+          stopSpinner();
+          process.stdout.write(`${label('agent:', c.bold + c.cyan)}\n`);
+        }
+        process.stdout.write(chunk);
+      });
+      process.stdout.write('\n');
+      printSeparator();
     } catch (err) {
-      console.error(label('Error:', c.bold + c.yellow), err instanceof Error ? err.message : err);
+      stopSpinner();
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`\n${label('✗', c.bold + c.red)} ${label(msg, c.red)}`);
     } finally {
       isProcessing = false;
       rl.setPrompt(getPrompt());
