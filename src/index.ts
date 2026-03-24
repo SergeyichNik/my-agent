@@ -1,12 +1,12 @@
 import * as readline from 'readline';
+import * as os from 'os';
+import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { config } from './config';
 import { Agent } from './agent';
 import { DeepSeekProvider } from './providers/deepseek';
-
-const provider = new DeepSeekProvider(config);
-const agent = new Agent(provider);
-
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+import { JsonSessionStorage } from './storage/json';
+import { Session } from './types';
 
 const c = {
   reset:    '\x1b[0m',
@@ -20,80 +20,171 @@ function label(text: string, style: string): string {
   return `${style}${text}${c.reset}`;
 }
 
-console.log(label('Agent ready.', c.bold), 'Press Enter to send. Paste multi-line code — it sends as one message.');
-console.log(`Type ${label('/ml', c.bold)} to switch to multi-line mode (use ${label('---', c.bold)} to send). Ctrl+C to exit.\n`);
-
-const buffer: string[] = [];
-let isProcessing = false;
-let submitTimer: ReturnType<typeof setTimeout> | null = null;
-let multilineMode = false;
-
-const PASTE_WINDOW_MS = 50;
-
-function getPrompt(): string {
-  const indicator = multilineMode ? 'ml' : 'you';
-  return `${c.dim}${indicator}>${c.reset} `;
+function relativeTime(isoDate: string): string {
+  const diffMs = Date.now() - new Date(isoDate).getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins} minute${diffMins === 1 ? '' : 's'} ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays === 1) return 'yesterday';
+  return `${diffDays} days ago`;
 }
 
-async function submit(): Promise<void> {
-  const input = buffer.join('\n').trim();
-  buffer.length = 0;
-
-  if (!input) {
-    rl.setPrompt(getPrompt());
-    rl.prompt();
-    return;
-  }
-
-  process.stdout.write(`\n${label('agent:', c.bold + c.cyan)}\n`);
-  rl.setPrompt('');
-  isProcessing = true;
-  try {
-    await agent.chat(input, (chunk) => process.stdout.write(chunk));
-    process.stdout.write('\n\n');
-  } catch (err) {
-    console.error(label('Error:', c.bold + c.yellow), err instanceof Error ? err.message : err);
-  } finally {
-    isProcessing = false;
-    rl.setPrompt(getPrompt());
-    rl.prompt();
-  }
+function defaultSessionName(): string {
+  const date = new Date().toISOString().slice(0, 10);
+  const shortId = randomUUID().slice(0, 4);
+  return `session-${date}-${shortId}`;
 }
 
-rl.setPrompt(getPrompt());
-rl.prompt();
+function promptNewSession(rl: readline.Interface): Promise<Session> {
+  const defaultName = defaultSessionName();
+  return new Promise((resolve) => {
+    rl.question(`Session name (default: ${defaultName}): `, (input) => {
+      const name = input.trim() || defaultName;
+      resolve({
+        id: randomUUID(),
+        name,
+        messageCount: 0,
+        lastSavedAt: new Date().toISOString(),
+        messages: [],
+      });
+    });
+  });
+}
 
-rl.on('line', (line) => {
-  if (isProcessing) return;
+function pickSession(rl: readline.Interface, sessions: Session[]): Promise<Session> {
+  console.log('\nSessions:');
+  sessions.forEach((s, i) => {
+    const msgs = `${s.messageCount} message${s.messageCount === 1 ? '' : 's'}`;
+    console.log(`  [${i + 1}] ${s.name} (${msgs}, last: ${relativeTime(s.lastSavedAt)})`);
+  });
+  console.log(`  [n] Start new session\n`);
 
-  if (line.trim() === '/ml') {
-    multilineMode = !multilineMode;
+  return new Promise((resolve) => {
+    const ask = () => {
+      rl.question('> ', (input) => {
+        const trimmed = input.trim();
+
+        if (trimmed === 'n') {
+          promptNewSession(rl).then(resolve);
+          return;
+        }
+
+        const num = parseInt(trimmed, 10);
+        if (!isNaN(num) && num >= 1 && num <= sessions.length) {
+          resolve(sessions[num - 1]);
+          return;
+        }
+
+        console.log(`Enter 1–${sessions.length} to resume a session, or 'n' for new.`);
+        ask();
+      });
+    };
+    ask();
+  });
+}
+
+async function main() {
+  const provider = new DeepSeekProvider(config);
+  const storage = new JsonSessionStorage(path.join(os.homedir(), '.my-agent', 'sessions'));
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+  const sessions = await storage.listSessions();
+  const session: Session = sessions.length > 0
+    ? await pickSession(rl, sessions)
+    : await promptNewSession(rl);
+
+  const agent = new Agent(provider, storage, session);
+
+  if (session.messages.length > 0) {
+    agent.loadHistory(session.messages);
+    console.log(`\nResuming '${session.name}' — ${session.messages.length} messages loaded.`);
+  } else {
+    console.log(`\nStarted session '${session.name}'.`);
+  }
+
+  console.log('\n' + label('Agent ready.', c.bold), 'Press Enter to send. Paste multi-line code — it sends as one message.');
+  console.log(`Type ${label('/ml', c.bold)} to switch to multi-line mode (use ${label('---', c.bold)} to send). Ctrl+C to exit.\n`);
+
+  const buffer: string[] = [];
+  let isProcessing = false;
+  let submitTimer: ReturnType<typeof setTimeout> | null = null;
+  let multilineMode = false;
+
+  const PASTE_WINDOW_MS = 50;
+
+  function getPrompt(): string {
+    const indicator = multilineMode ? 'ml' : 'you';
+    return `${c.dim}${indicator}>${c.reset} `;
+  }
+
+  async function submit(): Promise<void> {
+    const input = buffer.join('\n').trim();
     buffer.length = 0;
-    if (submitTimer) { clearTimeout(submitTimer); submitTimer = null; }
-    console.log(multilineMode
-      ? `${label('Multi-line mode ON', c.bold)} — type ${label('---', c.bold)} on a new line to send.`
-      : `${label('Multi-line mode OFF', c.bold)} — Enter sends, paste auto-detected.`);
-    rl.setPrompt(getPrompt());
-    rl.prompt();
-    return;
-  }
 
-  if (multilineMode) {
-    if (line.trim() === '---') {
-      submit();
-    } else {
-      buffer.push(line);
-      rl.setPrompt(`${c.dim}...${c.reset} `);
+    if (!input) {
+      rl.setPrompt(getPrompt());
+      rl.prompt();
+      return;
+    }
+
+    process.stdout.write(`\n${label('agent:', c.bold + c.cyan)}\n`);
+    rl.setPrompt('');
+    isProcessing = true;
+    try {
+      await agent.chat(input, (chunk) => process.stdout.write(chunk));
+      process.stdout.write('\n\n');
+    } catch (err) {
+      console.error(label('Error:', c.bold + c.yellow), err instanceof Error ? err.message : err);
+    } finally {
+      isProcessing = false;
+      rl.setPrompt(getPrompt());
       rl.prompt();
     }
-  } else {
-    buffer.push(line);
-    if (submitTimer) clearTimeout(submitTimer);
-    submitTimer = setTimeout(() => {
-      submitTimer = null;
-      submit();
-    }, PASTE_WINDOW_MS);
   }
-});
 
-rl.on('close', () => process.exit(0));
+  rl.setPrompt(getPrompt());
+  rl.prompt();
+
+  rl.on('line', (line) => {
+    if (isProcessing) return;
+
+    if (line.trim() === '/ml') {
+      multilineMode = !multilineMode;
+      buffer.length = 0;
+      if (submitTimer) { clearTimeout(submitTimer); submitTimer = null; }
+      console.log(multilineMode
+        ? `${label('Multi-line mode ON', c.bold)} — type ${label('---', c.bold)} on a new line to send.`
+        : `${label('Multi-line mode OFF', c.bold)} — Enter sends, paste auto-detected.`);
+      rl.setPrompt(getPrompt());
+      rl.prompt();
+      return;
+    }
+
+    if (multilineMode) {
+      if (line.trim() === '---') {
+        submit();
+      } else {
+        buffer.push(line);
+        rl.setPrompt(`${c.dim}...${c.reset} `);
+        rl.prompt();
+      }
+    } else {
+      buffer.push(line);
+      if (submitTimer) clearTimeout(submitTimer);
+      submitTimer = setTimeout(() => {
+        submitTimer = null;
+        submit();
+      }, PASTE_WINDOW_MS);
+    }
+  });
+
+  rl.on('close', () => process.exit(0));
+}
+
+main().catch(err => {
+  console.error('Fatal error:', err);
+  process.exit(1);
+});

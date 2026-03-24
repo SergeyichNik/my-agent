@@ -28,6 +28,21 @@ npx ts-node src/index.ts
 
 ## Usage
 
+On startup, you'll see a session picker:
+
+```
+Sessions:
+  [1] code-review (12 messages, last: 2 hours ago)
+  [2] auth-feature (4 messages, last: yesterday)
+  [n] Start new session
+
+> _
+```
+
+Pick a number to resume, or `n` to start a new session (you'll be prompted for a name).
+
+---
+
 User input and agent response are visually separated with labels and colors:
 
 ```
@@ -41,7 +56,7 @@ you>
 - `you>` — dim prompt for user input
 - `agent:` — bold cyan label before each response
 - Responses stream token-by-token as they arrive
-- Conversation history is preserved for the entire session
+- Conversation history is saved automatically after each response
 - Press `Ctrl+C` to exit
 
 ### Normal mode (default)
@@ -76,23 +91,34 @@ ml> First paragraph.
 agent: ...
 ```
 
-Use this mode when you need to manually type a message with empty lines.
+## Sessions
+
+Sessions are stored in `~/.my-agent/sessions/` as JSON files (one per session). They persist across working directories.
+
+Each session saves the full conversation history (excluding the system prompt) and auto-saves after every assistant response.
 
 ## Architecture
 
 ```
 src/
-  index.ts              CLI entry — readline loop, I/O only
-  agent.ts              Agent class — holds history, calls provider
+  index.ts              CLI entry — session picker, readline loop, I/O only
+  agent.ts              Agent class — holds history, calls provider, auto-saves
   config.ts             Loads .env, validates required vars
+  types.ts              Shared types: Message, LLMProvider, Session, SessionStorage
   providers/
-    types.ts            LLMProvider interface + Message type
+    types.ts            Re-exports from types.ts
     deepseek.ts         DeepSeek implementation (OpenAI-compatible SSE)
+  storage/
+    json.ts             JsonSessionStorage — one JSON file per session
 ```
 
 **Adding a new provider** (e.g. OpenRouter):
 1. Create `src/providers/openrouter.ts` implementing `LLMProvider`
 2. Swap it in `src/index.ts` — no other changes needed
+
+**Migrating sessions to SQLite:**
+1. Create `src/storage/sqlite.ts` implementing `SessionStorage`
+2. Change one line in `src/index.ts` where `JsonSessionStorage` is instantiated
 
 ## Requirements
 
