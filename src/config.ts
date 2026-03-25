@@ -10,10 +10,19 @@ function requireEnv(name: string): string {
   return value;
 }
 
+const provider = requireEnv('PROVIDER') as 'deepseek' | 'gemini';
+
 export const config = {
-  apiKey: requireEnv('LLM_API_KEY'),
-  model: requireEnv('LLM_MODEL'),
-  baseUrl: requireEnv('LLM_BASE_URL'),
+  provider,
+  deepseek: provider === 'deepseek' ? {
+    apiKey:  requireEnv('DEEPSEEK_API_KEY'),
+    model:   requireEnv('DEEPSEEK_MODEL'),
+    baseUrl: process.env['DEEPSEEK_BASE_URL'] ?? 'https://api.deepseek.com',
+  } : null,
+  gemini: provider === 'gemini' ? {
+    apiKey: requireEnv('GEMINI_API_KEY'),
+    model:  process.env['GEMINI_MODEL'] ?? 'gemini-2.0-flash',
+  } : null,
   sessionsDir: process.env['SESSIONS_DIR'] ?? './sessions',
 };
 

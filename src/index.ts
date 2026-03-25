@@ -4,8 +4,9 @@ import { randomUUID } from 'crypto';
 import { config } from './config';
 import { Agent } from './agent';
 import { DeepSeekProvider } from './providers/deepseek';
+import { GeminiProvider } from './providers/gemini';
 import { JsonSessionStorage } from './storage/json';
-import { Session } from './types';
+import { LLMProvider, Session } from './types';
 
 const c = {
   reset:  '\x1b[0m',
@@ -15,6 +16,13 @@ const c = {
   yellow: '\x1b[33m',
   green:  '\x1b[32m',
   red:    '\x1b[31m',
+};
+
+const CONTEXT_WINDOWS: Record<string, number> = {
+  'deepseek-chat':      65_536,
+  'deepseek-reasoner': 131_072,
+  'gemini-2.0-flash': 1_048_576,
+  'gemini-1.5-pro':   2_097_152,
 };
 
 function label(text: string, style: string): string {
@@ -110,7 +118,9 @@ function pickSession(rl: readline.Interface, sessions: Session[]): Promise<Sessi
 }
 
 async function main() {
-  const provider = new DeepSeekProvider(config);
+  const provider: LLMProvider = config.provider === 'gemini'
+    ? new GeminiProvider(config.gemini!)
+    : new DeepSeekProvider(config.deepseek!);
   const storage = new JsonSessionStorage(path.resolve(config.sessionsDir));
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
@@ -124,6 +134,10 @@ async function main() {
   if (session.messages.length > 0) {
     agent.loadHistory(session.messages);
   }
+
+  const activeModel = config.provider === 'gemini' ? config.gemini!.model : config.deepseek!.model;
+  const contextWindow = CONTEXT_WINDOWS[activeModel] ?? null;
+  let lastPromptTokens: number | null = null;
 
   const msgCount = session.messages.length;
   const countStr = msgCount > 0 ? ` ${label(`· ${msgCount} messages loaded`, c.dim)}` : '';
@@ -173,8 +187,22 @@ async function main() {
       process.stdout.write('\n');
       if (usage) {
         const sessionTotal = agent.totalTokensUsed;
+
+        let ctxPart = '';
+        if (contextWindow) {
+          const pct = (usage.prompt_tokens / contextWindow * 100).toFixed(1);
+          ctxPart = ` | ctx: ${pct}%`;
+        }
+
+        let growthPart = '';
+        if (lastPromptTokens !== null) {
+          const multiplier = (usage.prompt_tokens / lastPromptTokens).toFixed(2);
+          growthPart = ` | growth: ×${multiplier}`;
+        }
+        lastPromptTokens = usage.prompt_tokens;
+
         process.stdout.write(
-          `${c.dim}[tokens] prompt: ${usage.prompt_tokens} | completion: ${usage.completion_tokens} | total: ${usage.total_tokens} | session: ${sessionTotal.toLocaleString()}${c.reset}\n`
+          `${c.dim}[tokens] prompt: ${usage.prompt_tokens} | completion: ${usage.completion_tokens} | total: ${usage.total_tokens}${ctxPart}${growthPart} | session: ${sessionTotal.toLocaleString()}${c.reset}\n`
         );
       }
       printSeparator();

@@ -1,6 +1,6 @@
 # my-agent
 
-Minimal CLI agent that streams LLM responses token-by-token. Built on raw HTTP (no SDK), designed for extensibility.
+Minimal CLI agent that streams LLM responses token-by-token. Supports multiple providers (DeepSeek, Gemini), selected at launch via npm scripts.
 
 ## Setup
 
@@ -14,16 +14,22 @@ npm install
 cp .env.example .env
 ```
 
-Edit `.env` and fill in your credentials:
+Edit `.env` and fill in your credentials for the provider(s) you want to use:
 ```
-LLM_API_KEY=your-api-key-here
-LLM_MODEL=deepseek-chat
-LLM_BASE_URL=https://api.deepseek.com
+# DeepSeek
+DEEPSEEK_API_KEY=sk-...
+DEEPSEEK_MODEL=deepseek-chat
+
+# Gemini
+GEMINI_API_KEY=AIza...
+# GEMINI_MODEL=gemini-2.0-flash  (optional, this is the default)
 ```
 
 **3. Run**
 ```bash
-npx ts-node src/index.ts
+npm run start:deepseek   # DeepSeek
+npm run start:gemini     # Gemini
+npm start                # alias for start:deepseek
 ```
 
 ## Usage
@@ -106,18 +112,20 @@ Each session saves the full conversation history (excluding the system prompt) a
 src/
   index.ts              CLI entry — session picker, readline loop, I/O only
   agent.ts              Agent class — holds history, calls provider, auto-saves
-  config.ts             Loads .env, validates required vars
-  types.ts              Shared types: Message, LLMProvider, Session, SessionStorage
+  config.ts             Loads .env, selects provider config conditionally
+  types.ts              Shared types: Message, LLMProvider, Session, SessionStorage, UsageData
   providers/
-    types.ts            Re-exports from types.ts
-    deepseek.ts         DeepSeek implementation (OpenAI-compatible SSE)
+    deepseek.ts         DeepSeek implementation (OpenAI-compatible SSE, raw HTTP)
+    gemini.ts           Gemini implementation (@google/generative-ai SDK)
   storage/
     json.ts             JsonSessionStorage — one JSON file per session
 ```
 
 **Adding a new provider** (e.g. OpenRouter):
 1. Create `src/providers/openrouter.ts` implementing `LLMProvider`
-2. Swap it in `src/index.ts` — no other changes needed
+2. Add its env vars to `src/config.ts` (conditionally required)
+3. Add a branch in `src/index.ts` provider selection
+4. Add `start:openrouter` script to `package.json`
 
 **Migrating sessions to SQLite:**
 1. Create `src/storage/sqlite.ts` implementing `SessionStorage`
