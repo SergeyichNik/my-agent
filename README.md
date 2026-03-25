@@ -57,6 +57,7 @@ you>
 - `agent:` — bold cyan label before each response
 - Braille spinner while waiting for the first token
 - Responses stream token-by-token as they arrive
+- Dim token stats line printed after each response (prompt / completion / total / session cumulative)
 - Dim separator line printed after each response
 - Conversation history is saved automatically after each response
 - Press `Ctrl+C` to exit
@@ -97,7 +98,7 @@ agent: ...
 
 Sessions are stored in `~/.my-agent/sessions/` as JSON files (one per session). They persist across working directories.
 
-Each session saves the full conversation history (excluding the system prompt) and auto-saves after every assistant response.
+Each session saves the full conversation history (excluding the system prompt) and auto-saves after every assistant response. The cumulative token count (`totalTokensUsed`) is also persisted — if you resume a session, the counter carries over from previous runs.
 
 ## Architecture
 

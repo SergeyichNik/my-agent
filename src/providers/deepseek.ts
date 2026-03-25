@@ -1,4 +1,4 @@
-import { LLMProvider, Message } from './types';
+import { LLMProvider, Message, UsageData } from '../types';
 
 interface DeepSeekConfig {
   apiKey: string;
@@ -17,7 +17,7 @@ export class DeepSeekProvider implements LLMProvider {
     this.baseUrl = baseUrl;
   }
 
-  async streamChat(messages: Message[], onChunk: (chunk: string) => void): Promise<void> {
+  async streamChat(messages: Message[], onChunk: (chunk: string) => void): Promise<UsageData | null> {
     const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: {
@@ -42,6 +42,7 @@ export class DeepSeekProvider implements LLMProvider {
 
     const decoder = new TextDecoder();
     let buffer = '';
+    let capturedUsage: UsageData | null = null;
 
     for await (const rawChunk of response.body as AsyncIterable<Uint8Array>) {
       buffer += decoder.decode(rawChunk, { stream: true });
@@ -53,7 +54,7 @@ export class DeepSeekProvider implements LLMProvider {
         if (!trimmed.startsWith('data: ')) continue;
 
         const data = trimmed.slice('data: '.length);
-        if (data === '[DONE]') return;
+        if (data === '[DONE]') return capturedUsage;
 
         try {
           const parsed = JSON.parse(data);
@@ -61,10 +62,15 @@ export class DeepSeekProvider implements LLMProvider {
           if (content) {
             onChunk(content);
           }
+          if (parsed.usage) {
+            capturedUsage = parsed.usage;
+          }
         } catch {
           // skip malformed SSE lines
         }
       }
     }
+
+    return capturedUsage;
   }
 }

@@ -5,8 +5,14 @@ export interface Message {
   content: string;
 }
 
+export interface UsageData {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
 export interface LLMProvider {
-  streamChat(messages: Message[], onChunk: (chunk: string) => void): Promise<void>;
+  streamChat(messages: Message[], onChunk: (chunk: string) => void): Promise<UsageData | null>;
 }
 
 export interface Session {
@@ -14,6 +20,7 @@ export interface Session {
   name: string;
   messageCount: number;
   lastSavedAt: string; // ISO 8601
+  totalTokensUsed: number;
   messages: Message[]; // excludes system message
 }
 

@@ -67,6 +67,7 @@ function promptNewSession(rl: readline.Interface): Promise<Session> {
         name,
         messageCount: 0,
         lastSavedAt: new Date().toISOString(),
+        totalTokensUsed: 0,
         messages: [],
       });
     });
@@ -161,7 +162,7 @@ async function main() {
     let headerPrinted = false;
 
     try {
-      await agent.chat(input, (chunk) => {
+      const usage = await agent.chat(input, (chunk) => {
         if (!headerPrinted) {
           headerPrinted = true;
           stopSpinner();
@@ -170,6 +171,12 @@ async function main() {
         process.stdout.write(chunk);
       });
       process.stdout.write('\n');
+      if (usage) {
+        const sessionTotal = agent.totalTokensUsed;
+        process.stdout.write(
+          `${c.dim}[tokens] prompt: ${usage.prompt_tokens} | completion: ${usage.completion_tokens} | total: ${usage.total_tokens} | session: ${sessionTotal.toLocaleString()}${c.reset}\n`
+        );
+      }
       printSeparator();
     } catch (err) {
       stopSpinner();
