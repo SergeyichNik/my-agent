@@ -135,11 +135,19 @@ function printJudgeTable(judge: JudgeResult, promptTokensA: number, promptTokens
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+type BenchMessage = string | { text: string; checkpoint?: boolean };
+
 interface BenchScript {
   name: string;
   description: string;
   judgePrompt: string;
-  messages: string[];
+  messages: BenchMessage[];
+}
+
+function parseMessage(m: BenchMessage): { text: string; checkpoint: boolean } {
+  return typeof m === 'string'
+    ? { text: m, checkpoint: false }
+    : { text: m.text, checkpoint: m.checkpoint ?? false };
 }
 
 interface MessageResult {
@@ -287,10 +295,12 @@ async function runScript(script: BenchScript, judgeProvider: LLMProvider): Promi
   let summarizationMessageIndex = -1;
 
   for (let i = 0; i < N; i++) {
-    const msg = script.messages[i];
+    const { text: msg, checkpoint: isCheckpoint } = parseMessage(script.messages[i]);
+    const isLast = i === N - 1;
 
     printSeparator();
-    console.log(`${label(`Message ${i + 1}/${N}`, c.bold + c.dim)}`);
+    const cpMark = isCheckpoint ? ` ${label('✓ checkpoint', c.bold + c.green)}` : '';
+    console.log(`${label(`Message ${i + 1}/${N}`, c.bold + c.dim)}${cpMark}`);
     console.log(`${label('you>', c.dim)} ${msg}\n`);
 
     // ── Run A: no summary
@@ -354,9 +364,14 @@ async function runScript(script: BenchScript, judgeProvider: LLMProvider): Promi
       process.stdout.write(`${label('◆ Суммаризация сработала', c.bold + c.green)} — агент B теперь использует сжатый контекст\n\n`);
     }
 
-    // ── Judge (only after summarization has triggered)
+    // ── Judge
+    const shouldJudge = summarizationTriggered && (isCheckpoint || isLast);
+
     if (!summarizationTriggered) {
       process.stdout.write(`${c.dim}[судья пропущен — суммаризация ещё не сработала]${c.reset}\n\n`);
+      judgeResults.push(null);
+    } else if (!shouldJudge) {
+      process.stdout.write(`${c.dim}[судья пропущен — не контрольная точка]${c.reset}\n\n`);
       judgeResults.push(null);
     } else {
       const stopJ = startSpinner('[судья]    ');
