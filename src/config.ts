@@ -10,7 +10,7 @@ function requireEnv(name: string): string {
   return value;
 }
 
-const provider = requireEnv('PROVIDER') as 'deepseek' | 'gemini';
+const provider = requireEnv('PROVIDER') as 'deepseek' | 'gemini' | 'lmstudio';
 
 export const config = {
   provider,
@@ -23,7 +23,15 @@ export const config = {
     apiKey: requireEnv('GEMINI_API_KEY'),
     model:  process.env['GEMINI_MODEL'] ?? 'gemini-2.0-flash',
   } : null,
-  sessionsDir: process.env['SESSIONS_DIR'] ?? './sessions',
+  lmstudio: provider === 'lmstudio' ? {
+    baseUrl:     process.env['LMSTUDIO_BASE_URL'] ?? 'http://localhost:1234',
+    model:       process.env['LMSTUDIO_MODEL'] ?? 'local-model',
+    contextSize: parseInt(process.env['LMSTUDIO_CONTEXT_SIZE'] ?? '32768', 10),
+  } : null,
+  sessionsDir:      process.env['SESSIONS_DIR'] ?? './sessions',
+  summaryEnabled:   process.env['SUMMARY_ENABLED'] !== 'false',
+  summaryBatchSize: parseInt(process.env['SUMMARY_BATCH_SIZE'] ?? '10', 10),
+  summaryTail:      parseInt(process.env['SUMMARY_TAIL'] ?? '6', 10),
 };
 
 export const SYSTEM_PROMPT = 'You are a helpful assistant.';

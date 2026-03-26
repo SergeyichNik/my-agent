@@ -5,6 +5,7 @@ import { config } from './config';
 import { Agent } from './agent';
 import { DeepSeekProvider } from './providers/deepseek';
 import { GeminiProvider } from './providers/gemini';
+import { LMStudioProvider } from './providers/lmstudio';
 import { JsonSessionStorage } from './storage/json';
 import { LLMProvider, Session } from './types';
 
@@ -118,9 +119,14 @@ function pickSession(rl: readline.Interface, sessions: Session[]): Promise<Sessi
 }
 
 async function main() {
-  const provider: LLMProvider = config.provider === 'gemini'
-    ? new GeminiProvider(config.gemini!)
-    : new DeepSeekProvider(config.deepseek!);
+  let provider: LLMProvider;
+  if (config.provider === 'gemini') {
+    provider = new GeminiProvider(config.gemini!);
+  } else if (config.provider === 'lmstudio') {
+    provider = new LMStudioProvider(config.lmstudio!);
+  } else {
+    provider = new DeepSeekProvider(config.deepseek!);
+  }
   const storage = new JsonSessionStorage(path.resolve(config.sessionsDir));
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
@@ -132,11 +138,17 @@ async function main() {
   const agent = new Agent(provider, storage, session);
 
   if (session.messages.length > 0) {
-    agent.loadHistory(session.messages);
+    agent.loadHistory(session.messages, session.summary);
   }
 
-  const activeModel = config.provider === 'gemini' ? config.gemini!.model : config.deepseek!.model;
-  const contextWindow = CONTEXT_WINDOWS[activeModel] ?? null;
+  const activeModel = config.provider === 'gemini'
+    ? config.gemini!.model
+    : config.provider === 'lmstudio'
+      ? config.lmstudio!.model
+      : config.deepseek!.model;
+  const contextWindow = config.provider === 'lmstudio'
+    ? config.lmstudio!.contextSize
+    : CONTEXT_WINDOWS[activeModel] ?? null;
   let lastPromptTokens: number | null = null;
 
   const msgCount = session.messages.length;
@@ -144,7 +156,7 @@ async function main() {
   console.log(`\n${label('◆', c.bold + c.cyan)} ${label(session.name, c.bold)}${countStr}`);
 
   console.log('\n' + label('Agent ready.', c.bold), 'Press Enter to send. Paste multi-line code — it sends as one message.');
-  console.log(`Type ${label('/ml', c.bold)} to switch to multi-line mode (use ${label('---', c.bold)} to send). Ctrl+C to exit.\n`);
+  console.log(`Type ${label('/ml', c.bold)} to switch to multi-line mode (use ${label('---', c.bold)} to send). Type ${label('/summary', c.bold)} to toggle summarization. Ctrl+C to exit.\n`);
 
   const buffer: string[] = [];
   let isProcessing = false;
@@ -230,6 +242,16 @@ async function main() {
       console.log(multilineMode
         ? `${label('Multi-line mode ON', c.bold)} — type ${label('---', c.bold)} on a new line to send.`
         : `${label('Multi-line mode OFF', c.bold)} — Enter sends, paste auto-detected.`);
+      rl.setPrompt(getPrompt());
+      rl.prompt();
+      return;
+    }
+
+    if (line.trim() === '/summary') {
+      const enabled = agent.toggleSummary();
+      console.log(enabled
+        ? `${label('Summarization ON', c.bold)} — older messages will be compressed automatically.`
+        : `${label('Summarization OFF', c.bold)} — full history will be sent on every request.`);
       rl.setPrompt(getPrompt());
       rl.prompt();
       return;

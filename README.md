@@ -1,6 +1,6 @@
 # my-agent
 
-Minimal CLI agent that streams LLM responses token-by-token. Supports multiple providers (DeepSeek, Gemini), selected at launch via npm scripts.
+Minimal CLI agent that streams LLM responses token-by-token. Supports multiple providers (DeepSeek, Gemini, LM Studio), selected at launch via npm scripts.
 
 ## Setup
 
@@ -23,12 +23,18 @@ DEEPSEEK_MODEL=deepseek-chat
 # Gemini
 GEMINI_API_KEY=AIza...
 # GEMINI_MODEL=gemini-2.0-flash  (optional, this is the default)
+
+# LM Studio — no API key needed, all vars are optional
+# LMSTUDIO_BASE_URL=http://localhost:1234   (default)
+# LMSTUDIO_MODEL=local-model               (default, LM Studio ignores it and uses loaded model)
+# LMSTUDIO_CONTEXT_SIZE=32768              (default)
 ```
 
 **3. Run**
 ```bash
 npm run start:deepseek   # DeepSeek
 npm run start:gemini     # Gemini
+npm run start:lmstudio   # LM Studio (local)
 npm start                # alias for start:deepseek
 ```
 
@@ -100,6 +106,23 @@ ml> First paragraph.
 agent: ...
 ```
 
+## Context Management
+
+To prevent the context window from filling up in long conversations, the agent automatically summarizes older messages.
+
+**How it works:**
+- The last `SUMMARY_TAIL` messages (default: 6) are always kept verbatim
+- When the number of older messages reaches `SUMMARY_BATCH_SIZE` (default: 10), they are summarized into a rolling summary using the same provider
+- The summary is injected as a system message before the tail in every subsequent request
+- The summary persists with the session and is restored on resume
+
+**Configuration** (optional, all have defaults):
+```
+SUMMARY_ENABLED=true    # set to false to disable summarization entirely
+SUMMARY_BATCH_SIZE=10   # messages accumulated before summarization triggers
+SUMMARY_TAIL=6          # last N messages always kept verbatim
+```
+
 ## Sessions
 
 Sessions are stored in `~/.my-agent/sessions/` as JSON files (one per session). They persist across working directories.
@@ -117,6 +140,7 @@ src/
   providers/
     deepseek.ts         DeepSeek implementation (OpenAI-compatible SSE, raw HTTP)
     gemini.ts           Gemini implementation (@google/generative-ai SDK)
+    lmstudio.ts         LM Studio implementation (OpenAI-compatible SSE, no auth)
   storage/
     json.ts             JsonSessionStorage — one JSON file per session
 ```

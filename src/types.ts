@@ -22,6 +22,7 @@ export interface Session {
   lastSavedAt: string; // ISO 8601
   totalTokensUsed: number;
   messages: Message[]; // excludes system message
+  summary?: string;    // rolling summary of older messages
 }
 
 export interface SessionStorage {
