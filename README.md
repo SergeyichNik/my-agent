@@ -155,6 +155,29 @@ src/
 1. Create `src/storage/sqlite.ts` implementing `SessionStorage`
 2. Change one line in `src/index.ts` where `JsonSessionStorage` is instantiated
 
+## Benchmarking
+
+The benchmark runner evaluates feature changes automatically — runs the same conversation with/without a feature, judges responses with an LLM, and saves a Markdown report.
+
+```bash
+npm run bench                    # run all scripts in bench/scripts/
+npm run bench -- summarization   # run a specific script by name
+```
+
+Reports are saved to `bench/reports/YYYY-MM-DD-{name}.md` with:
+- Side-by-side responses for each message
+- Quality scores (1–10) from LLM judge
+- Token usage comparison and savings %
+
+**Adding a new benchmark scenario:**
+1. Create `bench/scripts/{name}.json` with `name`, `description`, `judgePrompt`, and `messages`
+2. Run `npm run bench -- {name}`
+
+**Optional config:**
+```
+BENCH_JUDGE_MODEL=deepseek-reasoner   # use a stronger model for judging
+```
+
 ## Requirements
 
 - Node.js 18+

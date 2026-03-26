@@ -32,6 +32,9 @@ export const config = {
   summaryEnabled:   process.env['SUMMARY_ENABLED'] !== 'false',
   summaryBatchSize: parseInt(process.env['SUMMARY_BATCH_SIZE'] ?? '10', 10),
   summaryTail:      parseInt(process.env['SUMMARY_TAIL'] ?? '6', 10),
+  bench: {
+    judgeModel: process.env['BENCH_JUDGE_MODEL'],
+  },
 };
 
 export const SYSTEM_PROMPT = 'You are a helpful assistant.';

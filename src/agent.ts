@@ -38,6 +38,10 @@ export class Agent {
   }
 
   private buildPromptMessages(): Message[] {
+    if (!this.summaryEnabled) {
+      return this.history;
+    }
+
     const nonSystemCount = this.history.length - 1;
     const tail = nonSystemCount <= config.summaryTail
       ? this.history.slice(1)
@@ -57,6 +61,10 @@ export class Agent {
 
   get isSummaryEnabled(): boolean {
     return this.summaryEnabled;
+  }
+
+  get hasSummary(): boolean {
+    return this.summary !== null;
   }
 
   private async maybeSummarize(): Promise<void> {

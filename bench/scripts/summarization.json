@@ -1,0 +1,18 @@
+{
+  "name": "summarization",
+  "description": "Tests context retention and token efficiency with/without rolling summarization",
+  "judgePrompt": "Rate each response on quality and relevance (1-10). Pay special attention to whether the response correctly uses context from earlier in the conversation.",
+  "messages": [
+    "My name is Nikita. I'm building a TypeScript CLI agent that streams LLM responses.",
+    "The agent supports multiple providers: DeepSeek, Gemini, and LM Studio.",
+    "What are the main differences between streaming with SSE vs the Gemini SDK?",
+    "I've also added rolling summarization — older messages get compressed into a summary. What do you think of this approach?",
+    "What are potential failure modes of LLM-based summarization?",
+    "How would you test whether summarization actually preserves important context?",
+    "What's a good strategy for choosing SUMMARY_BATCH_SIZE and SUMMARY_TAIL values?",
+    "Should the summarization prompt be in English even if the conversation is in Russian?",
+    "What other context management strategies exist besides summarization?",
+    "If I wanted to add tool use (function calling) to the agent, where would I start?",
+    "What is my name, and what project am I working on?"
+  ]
+}
