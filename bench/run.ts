@@ -7,7 +7,7 @@ import { DeepSeekProvider } from '../src/providers/deepseek';
 import { GeminiProvider } from '../src/providers/gemini';
 import { LMStudioProvider } from '../src/providers/lmstudio';
 import { LLMProvider, UsageData } from '../src/types';
-import { runJudge, JudgeResult } from './judge';
+import { Judge, JudgeResult } from './judge';
 
 // ── Visual utilities ──────────────────────────────────────────────────────────
 
@@ -165,13 +165,6 @@ function createProvider(): LLMProvider {
   return new DeepSeekProvider(config.deepseek!);
 }
 
-function createJudgeProvider(agentProvider: LLMProvider): LLMProvider {
-  const judgeModel = config.bench.judgeModel;
-  if (!judgeModel) return agentProvider;
-  if (config.provider === 'gemini') return new GeminiProvider({ apiKey: config.gemini!.apiKey, model: judgeModel });
-  if (config.provider === 'lmstudio') return new LMStudioProvider({ baseUrl: config.lmstudio!.baseUrl, model: judgeModel });
-  return new DeepSeekProvider({ ...config.deepseek!, model: judgeModel });
-}
 
 // ── Script picker ─────────────────────────────────────────────────────────────
 
@@ -272,7 +265,7 @@ function buildReport(
 
 // ── Runner ────────────────────────────────────────────────────────────────────
 
-async function runScript(script: BenchScript, judgeProvider: LLMProvider): Promise<void> {
+async function runScript(script: BenchScript, judge: Judge): Promise<void> {
   const agentProvider = createProvider();
   const contextWindow = getContextWindow();
 
@@ -377,7 +370,7 @@ async function runScript(script: BenchScript, judgeProvider: LLMProvider): Promi
       const stopJ = startSpinner('[судья]    ');
       let judgeResult: JudgeResult | null = null;
       try {
-        judgeResult = await runJudge(judgeProvider, msg, responseA, responseB, script.judgePrompt);
+        judgeResult = await judge.evaluate(msg, responseA, responseB, script.judgePrompt);
       } catch {
         // silently skip
       }
@@ -427,8 +420,7 @@ async function main() {
   const arg = process.argv[2];
   const scriptsDir = path.join(__dirname, 'scripts');
 
-  const agentProvider = createProvider();
-  const judgeProvider = createJudgeProvider(agentProvider);
+  const judge = Judge.create();
 
   if (arg && arg !== 'all') {
     const scriptPath = path.join(scriptsDir, `${arg}.json`);
@@ -439,7 +431,7 @@ async function main() {
       console.error(`Script not found: ${scriptPath}`);
       process.exit(1);
     }
-    await runScript(JSON.parse(raw), judgeProvider);
+    await runScript(JSON.parse(raw), judge);
     return;
   }
 
@@ -460,7 +452,7 @@ async function main() {
   }
 
   for (const script of selected) {
-    await runScript(script, judgeProvider);
+    await runScript(script, judge);
   }
 }
 

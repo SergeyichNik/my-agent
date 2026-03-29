@@ -11,7 +11,7 @@ npm install
 
 **2. Create `.env`**
 ```bash
-cp .env.example .env
+cp .env.old.example .env.old
 ```
 
 Edit `.env` and fill in your credentials for the provider(s) you want to use:
@@ -108,19 +108,44 @@ agent: ...
 
 ## Context Management
 
-To prevent the context window from filling up in long conversations, the agent automatically summarizes older messages.
+The agent supports three context management strategies, switchable at any time with `/ctx`:
 
-**How it works:**
-- The last `SUMMARY_TAIL` messages (default: 6) are always kept verbatim
-- When the number of older messages reaches `SUMMARY_BATCH_SIZE` (default: 10), they are summarized into a rolling summary using the same provider
-- The summary is injected as a system message before the tail in every subsequent request
-- The summary persists with the session and is restored on resume
+### Strategy 1: Rolling Summary (default)
+Automatically summarizes older messages to keep the context window bounded.
+- Last `SUMMARY_TAIL` messages (default: 6) are always kept verbatim
+- When older messages reach `SUMMARY_BATCH_SIZE` (default: 10), they are compressed into a rolling summary
+- Summary is injected as a system message and persists with the session
+
+### Strategy 2: Sliding Window
+Keeps only the last N messages in every prompt. Fast and token-efficient, but older details are dropped.
+- Switch: `/ctx window` or `/ctx window 20` (custom N)
+- Default window size: 10 (configurable via `WINDOW_SIZE` env var)
+
+### Strategy 3: Sticky Facts
+After each turn, an LLM call extracts key facts (Goal / Constraints / Decisions / Preferences) from the conversation and prepends them as a structured system message. Combines structured memory with a recent-message window.
+- Switch: `/ctx facts` or `/ctx facts 8` (custom recent-window N)
+- Default window: 6 (configurable via `FACTS_WINDOW_SIZE` env var)
+- 1 extra LLM call per turn (small prompt, cheap)
+
+### Strategy 4: Branching
+Snapshot the conversation at any point and explore multiple independent directions.
+- Switch: `/ctx branch`
+- `/branch save <name>` — snapshot current history as a named branch
+- `/branch list` — show all branches
+- `/branch load <name>` — restore a branch (replaces current history)
+- Full history sent on every request (no compression)
+
+**Switching strategies is lossless** — full history is preserved in memory regardless of strategy.
+
+**Check current strategy:** `/ctx`
 
 **Configuration** (optional, all have defaults):
 ```
-SUMMARY_ENABLED=true    # set to false to disable summarization entirely
+SUMMARY_ENABLED=true    # set to false to disable initial rolling summary
 SUMMARY_BATCH_SIZE=10   # messages accumulated before summarization triggers
-SUMMARY_TAIL=6          # last N messages always kept verbatim
+SUMMARY_TAIL=6          # last N messages always kept verbatim in rolling summary
+WINDOW_SIZE=10          # default window size for sliding window strategy
+FACTS_WINDOW_SIZE=6     # recent messages included alongside facts
 ```
 
 ## Sessions
@@ -133,10 +158,17 @@ Each session saves the full conversation history (excluding the system prompt) a
 
 ```
 src/
-  index.ts              CLI entry — session picker, readline loop, I/O only
-  agent.ts              Agent class — holds history, calls provider, auto-saves
+  index.ts              CLI entry — session picker, readline loop, /ctx /branch commands
+  agent.ts              Agent class — holds history, delegates to ContextStrategy
   config.ts             Loads .env, selects provider config conditionally
-  types.ts              Shared types: Message, LLMProvider, Session, SessionStorage, UsageData
+  types.ts              Shared types: Message, LLMProvider, Session, StrategyState, ...
+  strategies/
+    context-strategy.ts ContextStrategy interface + StrategyName type
+    rolling-summary.ts  Rolling summarization (default)
+    sliding-window.ts   Sliding window — last N messages only
+    sticky-facts.ts     Sticky facts — LLM-extracted key-value memory
+    branching.ts        Branching — named snapshots, independent conversation branches
+    index.ts            createStrategy() factory + re-exports
   providers/
     deepseek.ts         DeepSeek implementation (OpenAI-compatible SSE, raw HTTP)
     gemini.ts           Gemini implementation (@google/generative-ai SDK)
@@ -157,21 +189,36 @@ src/
 
 ## Benchmarking
 
-The benchmark runner evaluates feature changes automatically — runs the same conversation with/without a feature, judges responses with an LLM, and saves a Markdown report.
-
+### Two-way benchmark (with/without summarization)
 ```bash
-npm run bench                    # run all scripts in bench/scripts/
+npm run bench                    # interactive script picker
 npm run bench -- summarization   # run a specific script by name
 ```
 
-Reports are saved to `bench/reports/YYYY-MM-DD-{name}.md` with:
-- Side-by-side responses for each message
-- Quality scores (1–10) from LLM judge
-- Token usage comparison and savings %
+Reports saved to `bench/reports/YYYY-MM-DD-{name}.md`.
 
-**Adding a new benchmark scenario:**
+### Three-way strategy benchmark
+Compare all three context strategies (Sliding Window vs Sticky Facts vs Branching) on the same scenario:
+
+```bash
+npm run bench:strategies             # interactive script picker (DeepSeek)
+npm run bench:strategies:gemini      # Gemini
+npm run bench:strategies:lm          # LM Studio
+npm run bench:strategies -- tz-requirements   # run specific scenario directly
+```
+
+Reports saved to `bench/reports/YYYY-MM-DD-strategies-{name}.md` with:
+- Three-column response comparison per checkpoint message
+- LLM judge scores: context retention / quality / completeness / overall
+- Token usage per strategy and savings vs full-context (Branching) baseline
+
+**Built-in benchmark scenarios:**
+- `tz-requirements` — 15-message requirements gathering session for a web platform. Tests how well each strategy retains early context (budget, stack, deadlines, roles) by message 15.
+- `summarization`, `context-retention`, `quick` — existing two-way scenarios
+
+**Adding a new scenario:**
 1. Create `bench/scripts/{name}.json` with `name`, `description`, `judgePrompt`, and `messages`
-2. Run `npm run bench -- {name}`
+2. Mark important messages with `{ "text": "...", "checkpoint": true }` for judge evaluation
 
 **Optional config:**
 ```

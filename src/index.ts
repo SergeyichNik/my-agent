@@ -139,6 +139,9 @@ async function main() {
 
   if (session.messages.length > 0) {
     agent.loadHistory(session.messages, session.summary);
+    if (session.strategyState) {
+      agent.setStrategyFromSession(session.strategyState);
+    }
   }
 
   const activeModel = config.provider === 'gemini'
@@ -156,7 +159,7 @@ async function main() {
   console.log(`\n${label('◆', c.bold + c.cyan)} ${label(session.name, c.bold)}${countStr}`);
 
   console.log('\n' + label('Agent ready.', c.bold), 'Press Enter to send. Paste multi-line code — it sends as one message.');
-  console.log(`Type ${label('/ml', c.bold)} to switch to multi-line mode (use ${label('---', c.bold)} to send). Type ${label('/summary', c.bold)} to toggle summarization. Ctrl+C to exit.\n`);
+  console.log(`Type ${label('/ml', c.bold)} to toggle multi-line mode. ${label('/ctx [window|facts|branch]', c.bold)} to switch context strategy. ${label('/branch save|list|load', c.bold)} for branching. Ctrl+C to exit.\n`);
 
   const buffer: string[] = [];
   let isProcessing = false;
@@ -234,6 +237,80 @@ async function main() {
 
   rl.on('line', (line) => {
     if (isProcessing) return;
+
+    // ── /ctx ──────────────────────────────────────────────────────────────────
+    if (line.trim() === '/ctx' || line.trim().startsWith('/ctx ')) {
+      const parts = line.trim().split(/\s+/);
+      const sub = parts[1];
+      const arg = parts[2] ? parseInt(parts[2], 10) : undefined;
+
+      if (!sub) {
+        console.log(`${label('◆ Context strategy:', c.bold + c.cyan)} ${agent.activeStrategy}`);
+        console.log(`  ${label(agent.activeStrategyDescription, c.dim)}`);
+      } else if (sub === 'window') {
+        const n = (!arg || isNaN(arg)) ? undefined : arg;
+        agent.setStrategy('window', { windowSize: n });
+        console.log(`${label('◆ Strategy:', c.bold + c.cyan)} ${label(agent.activeStrategyDescription, c.bold)}`);
+      } else if (sub === 'facts') {
+        const n = (!arg || isNaN(arg)) ? undefined : arg;
+        agent.setStrategy('facts', { windowSize: n });
+        console.log(`${label('◆ Strategy:', c.bold + c.cyan)} ${label(agent.activeStrategyDescription, c.bold)}`);
+      } else if (sub === 'branch') {
+        agent.setStrategy('branch');
+        console.log(`${label('◆ Strategy:', c.bold + c.cyan)} ${label(agent.activeStrategyDescription, c.bold)}`);
+        console.log(`  ${label('Use /branch save|list|load <name> to manage branches.', c.dim)}`);
+      } else if (sub === 'rolling') {
+        agent.setStrategy('rolling');
+        console.log(`${label('◆ Strategy:', c.bold + c.cyan)} ${label(agent.activeStrategyDescription, c.bold)}`);
+      } else {
+        console.log(`Unknown strategy. Use: ${label('/ctx window|facts|branch|rolling', c.bold)}`);
+      }
+      rl.setPrompt(getPrompt());
+      rl.prompt();
+      return;
+    }
+
+    // ── /branch ───────────────────────────────────────────────────────────────
+    if (line.trim().startsWith('/branch')) {
+      const parts = line.trim().split(/\s+/);
+      const sub = parts[1];
+      const name = parts.slice(2).join(' ') || parts[2];
+
+      try {
+        if (sub === 'save') {
+          if (!name) { console.log('Usage: /branch save <name>'); }
+          else {
+            agent.branchSave(name);
+            console.log(`${label('◆ Branch saved:', c.bold + c.green)} "${name}"`);
+          }
+        } else if (sub === 'list') {
+          const branches = agent.branchList();
+          if (branches.length === 0) {
+            console.log(`${c.dim}No branches yet.${c.reset}`);
+          } else {
+            console.log(`${label('Branches:', c.bold)}`);
+            for (const b of branches) {
+              const active = b.name === (agent as any).strategy?.getActiveBranch?.() ? ' ◀ active' : '';
+              console.log(`  ${label(b.name, c.bold + c.cyan)}${label(active, c.green)}  ${label(`(${b.messageCount} msgs)`, c.dim)}`);
+            }
+          }
+        } else if (sub === 'load') {
+          if (!name) { console.log('Usage: /branch load <name>'); }
+          else {
+            agent.branchLoad(name);
+            console.log(`${label('◆ Branch loaded:', c.bold + c.cyan)} "${name}"`);
+          }
+        } else {
+          console.log(`Usage: ${label('/branch save|list|load <name>', c.bold)}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`${label('✗', c.bold + c.red)} ${label(msg, c.red)}`);
+      }
+      rl.setPrompt(getPrompt());
+      rl.prompt();
+      return;
+    }
 
     if (line.trim() === '/ml') {
       multilineMode = !multilineMode;

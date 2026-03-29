@@ -6,10 +6,13 @@
     "start:deepseek": "PROVIDER=deepseek ts-node src/index.ts",
     "start:gemini":   "PROVIDER=gemini ts-node src/index.ts",
     "start:lmstudio": "PROVIDER=lmstudio ts-node src/index.ts",
-    "bench":          "PROVIDER=deepseek ts-node bench/run.ts",
-    "bench:deepseek": "PROVIDER=deepseek ts-node bench/run.ts",
-    "bench:gemini":   "PROVIDER=gemini ts-node bench/run.ts",
-    "bench:lmstudio": "PROVIDER=lmstudio ts-node bench/run.ts"
+    "bench":                   "PROVIDER=deepseek ts-node bench/run.ts",
+    "bench:deepseek":          "PROVIDER=deepseek ts-node bench/run.ts",
+    "bench:gemini":            "PROVIDER=gemini ts-node bench/run.ts",
+    "bench:lmstudio":          "PROVIDER=lmstudio ts-node bench/run.ts",
+    "bench:strategies":        "PROVIDER=deepseek ts-node bench/run-strategies.ts",
+    "bench:strategies:gemini": "PROVIDER=gemini ts-node bench/run-strategies.ts",
+    "bench:strategies:lm":     "PROVIDER=lmstudio ts-node bench/run-strategies.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

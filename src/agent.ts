@@ -1,23 +1,20 @@
-import { LLMProvider, Message, Session, SessionStorage, UsageData } from './types';
+import { LLMProvider, Message, Session, SessionStorage, StrategyState, UsageData } from './types';
 import { config, SYSTEM_PROMPT } from './config';
-
-function buildSummaryRequest(existingSummary: string | null, messages: Message[]): string {
-  const prevPart = existingSummary
-    ? `Previous summary:\n${existingSummary}`
-    : 'Previous summary:\nNone';
-
-  const msgPart = messages
-    .map(m => `${m.role}: ${m.content}`)
-    .join('\n\n');
-
-  return `${prevPart}\n\nNew messages to incorporate:\n${msgPart}\n\nWrite a concise summary that preserves all important context, decisions, and facts.`;
-}
+import {
+  ContextStrategy,
+  StrategyName,
+  RollingSummaryStrategy,
+  SlidingWindowStrategy,
+  BranchingStrategy,
+  BranchListEntry,
+  createStrategy,
+  createStrategyFromState,
+} from './strategies';
 
 export class Agent {
   private readonly provider: LLMProvider;
-  private history: Message[];
-  private summary: string | null = null;
-  private summaryEnabled: boolean = config.summaryEnabled;
+  private history: Message[]; // history[0] is always the system message
+  private strategy: ContextStrategy;
   private readonly storage?: SessionStorage;
   private readonly session?: Session;
 
@@ -26,87 +23,129 @@ export class Agent {
     this.storage = storage;
     this.session = session;
     this.history = [{ role: 'system', content: SYSTEM_PROMPT }];
+    this.strategy = new RollingSummaryStrategy();
   }
 
   loadHistory(messages: Message[], summary?: string): void {
     this.history = [{ role: 'system', content: SYSTEM_PROMPT }, ...messages];
-    this.summary = summary ?? null;
+    // Restore legacy rolling summary state
+    if (summary && this.strategy.name === 'rolling') {
+      this.strategy.loadState({ name: 'rolling', summary });
+    }
+  }
+
+  setStrategyFromSession(state: StrategyState): void {
+    this.strategy = createStrategyFromState(state);
+    // For branching, ensure history is synced into branch state
+    if (this.strategy.name === 'branch') {
+      (this.strategy as BranchingStrategy).initFromHistory(this.history.slice(1));
+    }
+  }
+
+  setStrategy(name: StrategyName, opts?: { windowSize?: number }): void {
+    const currentHistory = this.history.slice(1); // without system message
+    this.strategy = createStrategy(name, opts);
+    // For branching: snapshot current history as 'main' branch
+    if (name === 'branch') {
+      (this.strategy as BranchingStrategy).initFromHistory(currentHistory);
+    }
+  }
+
+  get activeStrategy(): StrategyName {
+    return this.strategy.name;
+  }
+
+  get activeStrategyDescription(): string {
+    return this.strategy.describe();
   }
 
   get totalTokensUsed(): number {
     return this.session?.totalTokensUsed ?? 0;
   }
 
-  private buildPromptMessages(): Message[] {
-    if (!this.summaryEnabled) {
-      return this.history;
-    }
+  // ── Branching facade ────────────────────────────────────────────────────────
 
-    const nonSystemCount = this.history.length - 1;
-    const tail = nonSystemCount <= config.summaryTail
-      ? this.history.slice(1)
-      : this.history.slice(-(config.summaryTail));
-
-    const messages: Message[] = [{ role: 'system', content: SYSTEM_PROMPT }];
-    if (this.summary) {
-      messages.push({ role: 'system', content: `Earlier conversation summary:\n${this.summary}` });
+  branchSave(name: string): void {
+    if (this.strategy.name !== 'branch') {
+      throw new Error('Branch operations require branch strategy. Switch with /ctx branch first.');
     }
-    return [...messages, ...tail];
+    (this.strategy as BranchingStrategy).save(name, this.history.slice(1));
   }
 
+  branchList(): BranchListEntry[] {
+    if (this.strategy.name !== 'branch') {
+      throw new Error('Branch operations require branch strategy. Switch with /ctx branch first.');
+    }
+    return (this.strategy as BranchingStrategy).list();
+  }
+
+  branchLoad(name: string): void {
+    if (this.strategy.name !== 'branch') {
+      throw new Error('Branch operations require branch strategy. Switch with /ctx branch first.');
+    }
+    const messages = (this.strategy as BranchingStrategy).load(name);
+    if (!messages) throw new Error(`Branch "${name}" not found.`);
+    this.history = [{ role: 'system', content: SYSTEM_PROMPT }, ...messages];
+  }
+
+  // ── Backward compat (used by bench/run.ts) ──────────────────────────────────
+
   toggleSummary(): boolean {
-    this.summaryEnabled = !this.summaryEnabled;
-    return this.summaryEnabled;
+    if (this.strategy.name === 'rolling') {
+      this.setStrategy('window');
+      return false;
+    } else {
+      const currentHistory = this.history.slice(1);
+      this.strategy = new RollingSummaryStrategy();
+      // Restore any existing summary from session
+      if (this.session?.summary) {
+        this.strategy.loadState({ name: 'rolling', summary: this.session.summary });
+      }
+      return true;
+    }
   }
 
   get isSummaryEnabled(): boolean {
-    return this.summaryEnabled;
+    return this.strategy.name === 'rolling';
   }
 
   get hasSummary(): boolean {
-    return this.summary !== null;
+    return this.strategy.name === 'rolling' &&
+      (this.strategy as RollingSummaryStrategy).getSummary() !== null;
   }
 
-  private async maybeSummarize(): Promise<void> {
-    if (!this.summaryEnabled) return;
-    const nonSystemCount = this.history.length - 1;
-    const nonTailCount = nonSystemCount - config.summaryTail;
-    if (nonTailCount < config.summaryBatchSize) return;
-
-    const batch = this.history.slice(1, this.history.length - config.summaryTail);
-    const summaryMessages: Message[] = [
-      { role: 'system', content: 'You are a conversation summarizer. Be concise but preserve all important context, decisions, and facts.' },
-      { role: 'user', content: buildSummaryRequest(this.summary, batch) },
-    ];
-
-    let newSummary = '';
-    await this.provider.streamChat(summaryMessages, (chunk) => { newSummary += chunk; });
-
-    this.summary = newSummary.trim();
-    this.history = [this.history[0], ...this.history.slice(-(config.summaryTail))];
-  }
+  // ── Core chat ───────────────────────────────────────────────────────────────
 
   async chat(userInput: string, onChunk: (chunk: string) => void): Promise<UsageData | null> {
     this.history.push({ role: 'user', content: userInput });
 
+    const historyWithoutSystem = this.history.slice(1);
+    const promptMessages = this.strategy.buildPromptMessages(SYSTEM_PROMPT, historyWithoutSystem);
+
     let fullResponse = '';
-    const usage = await this.provider.streamChat(this.buildPromptMessages(), (chunk) => {
+    const usage = await this.provider.streamChat(promptMessages, (chunk) => {
       fullResponse += chunk;
       onChunk(chunk);
     });
 
     this.history.push({ role: 'assistant', content: fullResponse });
 
-    await this.maybeSummarize();
+    // Strategy post-processing (summarize / extract facts / update branch snapshot)
+    const updatedHistory = await this.strategy.afterTurn(this.history.slice(1), this.provider);
+    this.history = [{ role: 'system', content: SYSTEM_PROMPT }, ...updatedHistory];
 
     if (this.storage && this.session) {
       if (usage) {
         this.session.totalTokensUsed = (this.session.totalTokensUsed ?? 0) + usage.total_tokens;
       }
-      this.session.messages = this.history.slice(1); // drop system message
+      this.session.messages = this.history.slice(1);
       this.session.messageCount = this.session.messages.length;
       this.session.lastSavedAt = new Date().toISOString();
-      this.session.summary = this.summary ?? undefined;
+      this.session.strategyState = this.strategy.serializeState();
+      // Keep legacy field in sync for rolling strategy
+      if (this.strategy.name === 'rolling') {
+        this.session.summary = (this.strategy as RollingSummaryStrategy).getSummary() ?? undefined;
+      }
       await this.storage.saveSession(this.session);
     }
 

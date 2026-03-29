@@ -32,8 +32,14 @@ export const config = {
   summaryEnabled:   process.env['SUMMARY_ENABLED'] !== 'false',
   summaryBatchSize: parseInt(process.env['SUMMARY_BATCH_SIZE'] ?? '10', 10),
   summaryTail:      parseInt(process.env['SUMMARY_TAIL'] ?? '6', 10),
+  windowSize:       parseInt(process.env['WINDOW_SIZE']        ?? '10', 10),
+  factsWindowSize:  parseInt(process.env['FACTS_WINDOW_SIZE']  ?? '6',  10),
   bench: {
-    judgeModel: process.env['BENCH_JUDGE_MODEL'],
+    judgeProvider:   (process.env['BENCH_JUDGE_PROVIDER'] ?? null) as 'deepseek' | 'gemini' | 'lmstudio' | null,
+    judgeModel:      process.env['BENCH_JUDGE_MODEL'] ?? null,
+    deepseekApiKey:  process.env['DEEPSEEK_API_KEY'] ?? null,
+    deepseekBaseUrl: process.env['DEEPSEEK_BASE_URL'] ?? 'https://api.deepseek.com',
+    geminiApiKey:    process.env['GEMINI_API_KEY'] ?? null,
   },
 };
 

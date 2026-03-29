@@ -15,14 +15,26 @@ export interface LLMProvider {
   streamChat(messages: Message[], onChunk: (chunk: string) => void): Promise<UsageData | null>;
 }
 
+export interface BranchData {
+  messages: Message[];
+  createdAt: string; // ISO 8601
+}
+
+export type StrategyState =
+  | { name: 'rolling'; summary: string | null }
+  | { name: 'window';  windowSize: number }
+  | { name: 'facts';   facts: string | null; windowSize: number }
+  | { name: 'branch';  activeBranch: string; branches: Record<string, BranchData> };
+
 export interface Session {
   id: string;
   name: string;
   messageCount: number;
   lastSavedAt: string; // ISO 8601
   totalTokensUsed: number;
-  messages: Message[]; // excludes system message
-  summary?: string;    // rolling summary of older messages
+  messages: Message[];      // excludes system message
+  summary?: string;         // legacy: rolling summary (kept for backward compat)
+  strategyState?: StrategyState;
 }
 
 export interface SessionStorage {
