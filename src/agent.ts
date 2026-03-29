@@ -63,6 +63,14 @@ export class Agent {
     return this.session?.totalTokensUsed ?? 0;
   }
 
+  get messages(): Message[] {
+    return this.history.slice(1); // without system message
+  }
+
+  get strategyState(): StrategyState {
+    return this.strategy.serializeState();
+  }
+
   // ── Branching facade ────────────────────────────────────────────────────────
 
   branchSave(name: string): void {

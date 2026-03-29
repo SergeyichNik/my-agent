@@ -6,27 +6,27 @@ import { Agent } from '../src/agent';
 import { DeepSeekProvider } from '../src/providers/deepseek';
 import { GeminiProvider } from '../src/providers/gemini';
 import { LMStudioProvider } from '../src/providers/lmstudio';
-import { LLMProvider, UsageData } from '../src/types';
+import { LLMProvider, Message, StrategyState, UsageData } from '../src/types';
 import { Judge, ThreeWayJudgeResult } from './judge';
 
 // ── Visual utilities ──────────────────────────────────────────────────────────
 
 const c = {
-  reset:  '\x1b[0m',
-  bold:   '\x1b[1m',
-  dim:    '\x1b[2m',
-  cyan:   '\x1b[36m',
-  yellow: '\x1b[33m',
-  green:  '\x1b[32m',
+  reset:   '\x1b[0m',
+  bold:    '\x1b[1m',
+  dim:     '\x1b[2m',
+  cyan:    '\x1b[36m',
+  yellow:  '\x1b[33m',
+  green:   '\x1b[32m',
   magenta: '\x1b[35m',
-  red:    '\x1b[31m',
+  red:     '\x1b[31m',
 };
 
 const CONTEXT_WINDOWS: Record<string, number> = {
-  'deepseek-chat':    65_536,
+  'deepseek-chat':     65_536,
   'deepseek-reasoner': 131_072,
-  'gemini-2.0-flash': 1_048_576,
-  'gemini-1.5-pro':   2_097_152,
+  'gemini-2.0-flash':  1_048_576,
+  'gemini-1.5-pro':    2_097_152,
 };
 
 function getContextWindow(): number | null {
@@ -39,72 +39,55 @@ function label(text: string, style: string): string {
   return `${style}${text}${c.reset}`;
 }
 
-function startSpinner(labelText: string): () => void {
-  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-  let i = 0;
-  const render = () =>
-    process.stdout.write(`\r${label(labelText, c.bold)} ${frames[i++ % frames.length]}`);
-  render();
-  const timer = setInterval(render, 80);
-  return () => {
-    clearInterval(timer);
-    process.stdout.write('\x1b[2K\r');
-  };
-}
-
 function printSeparator(): void {
   const width = Math.min(process.stdout.columns ?? 70, 70);
   process.stdout.write(`\n${c.dim}${'─'.repeat(width)}${c.reset}\n\n`);
 }
 
-function printTokenStats(label_: string, usage: UsageData | null, contextWindow: number | null, lastPrompt: number | null): void {
+function printTokenStats(tag: string, usage: UsageData | null, contextWindow: number | null, lastPrompt: number | null): void {
   if (!usage) return;
   let ctxPart = '';
   if (contextWindow) {
     const pct = (usage.prompt_tokens / contextWindow * 100).toFixed(1);
-    ctxPart = ` | ctx: ${pct}%`;
+    ctxPart = ` ctx:${pct}%`;
   }
   let growthPart = '';
   if (lastPrompt !== null) {
     const mult = (usage.prompt_tokens / lastPrompt).toFixed(2);
-    growthPart = ` | growth: ×${mult}`;
+    growthPart = ` growth:×${mult}`;
   }
   process.stdout.write(
-    `${c.dim}  [${label_}] prompt: ${usage.prompt_tokens} | completion: ${usage.completion_tokens}${ctxPart}${growthPart}${c.reset}\n`
+    `${c.dim}  [${tag}] prompt:${usage.prompt_tokens} compl:${usage.completion_tokens}${ctxPart}${growthPart}${c.reset}\n`
   );
 }
 
 function printThreeWayTable(judge: ThreeWayJudgeResult, tokensW: number, tokensF: number, tokensB: number): void {
   const colW = 22;
   const scoreW = 10;
-  const divider = `  ${'─'.repeat(colW)}┼${'─'.repeat(scoreW)}┼${'─'.repeat(scoreW)}┼${'─'.repeat(scoreW)}`;
+  const div = `  ${'─'.repeat(colW)}┼${'─'.repeat(scoreW)}┼${'─'.repeat(scoreW)}┼${'─'.repeat(scoreW)}`;
 
   process.stdout.write(`\n${label('  [судья]', c.dim)}\n`);
   process.stdout.write(`${c.dim}  ${'Критерий'.padEnd(colW)}│${'Window'.padStart(scoreW)}│${'Facts'.padStart(scoreW)}│${'Branch'.padStart(scoreW)}${c.reset}\n`);
-  process.stdout.write(`${c.dim}${divider}${c.reset}\n`);
+  process.stdout.write(`${c.dim}${div}${c.reset}\n`);
 
-  const rows: Array<{ name: string; key: 'context' | 'quality' | 'completeness' | 'overall' }> = [
-    { name: 'Сохранение контекста', key: 'context' },
-    { name: 'Качество ответа',      key: 'quality' },
-    { name: 'Полнота',              key: 'completeness' },
-  ];
-
-  for (const row of rows) {
-    const scores = judge[row.key];
+  for (const [name, key] of [
+    ['Сохранение контекста', 'context'],
+    ['Качество ответа',      'quality'],
+    ['Полнота',              'completeness'],
+  ] as const) {
+    const s = judge[key];
     process.stdout.write(
-      `${c.dim}  ${row.name.padEnd(colW)}│${ `${scores.scoreA}/10`.padStart(scoreW)}│${ `${scores.scoreB}/10`.padStart(scoreW)}│${ `${scores.scoreC}/10`.padStart(scoreW)}${c.reset}\n`
+      `${c.dim}  ${name.padEnd(colW)}│${`${s.scoreA}/10`.padStart(scoreW)}│${`${s.scoreB}/10`.padStart(scoreW)}│${`${s.scoreC}/10`.padStart(scoreW)}${c.reset}\n`
     );
   }
-
-  process.stdout.write(`${c.dim}${divider}${c.reset}\n`);
+  process.stdout.write(`${c.dim}${div}${c.reset}\n`);
   process.stdout.write(
     `  ${c.bold}${'Итог'.padEnd(colW)}${c.reset}${c.dim}│${`${judge.overall.scoreA}/10`.padStart(scoreW)}│${`${judge.overall.scoreB}/10`.padStart(scoreW)}│${`${judge.overall.scoreC}/10`.padStart(scoreW)}${c.reset}\n`
   );
-  process.stdout.write(`${c.dim}${divider}${c.reset}\n`);
+  process.stdout.write(`${c.dim}${div}${c.reset}\n`);
   process.stdout.write(
     `${c.dim}  ${'prompt_tokens'.padEnd(colW)}│${tokensW.toLocaleString().padStart(scoreW)}│${tokensF.toLocaleString().padStart(scoreW)}│${tokensB.toLocaleString().padStart(scoreW)}${c.reset}\n`
   );
-
   if (judge.conclusion) {
     process.stdout.write(`\n${c.dim}  Вывод: ${judge.conclusion}${c.reset}\n`);
   }
@@ -135,14 +118,102 @@ interface MessageResult {
   completionTokens: number;
 }
 
-// ── Providers ─────────────────────────────────────────────────────────────────
+interface AgentSnapshot {
+  messages: Message[];
+  strategyState: StrategyState;
+}
+
+interface RunCheckpoint {
+  script: string;
+  startedAt: string;
+  lastCompletedIndex: number;
+  agentW: AgentSnapshot;
+  agentF: AgentSnapshot;
+  agentB: AgentSnapshot;
+  resultsW: MessageResult[];
+  resultsF: MessageResult[];
+  resultsB: MessageResult[];
+  judgeResults: Array<ThreeWayJudgeResult | null>;
+  lastPromptW: number | null;
+  lastPromptF: number | null;
+  lastPromptB: number | null;
+}
+
+// ── Interleaved streaming output ──────────────────────────────────────────────
+
+function makeEnqueue() {
+  type Entry = { tag: string; color: string; chunk: string };
+  const queue: Entry[] = [];
+
+  return function enqueue(tag: string, color: string, chunk: string): void {
+    queue.push({ tag, color, chunk });
+    while (queue.length > 0) {
+      const e = queue.shift()!;
+      process.stdout.write(`${e.color}[${e.tag}]${c.reset} ${e.chunk}`);
+    }
+  };
+}
+
+// ── Retry helper ──────────────────────────────────────────────────────────────
+
+async function chatWithRetry(
+  agent: Agent,
+  msg: string,
+  onChunk: (chunk: string) => void
+): Promise<UsageData | null> {
+  try {
+    return await agent.chat(msg, onChunk);
+  } catch {
+    await new Promise(r => setTimeout(r, 2000));
+    return await agent.chat(msg, onChunk);
+  }
+}
+
+// ── Checkpoint helpers ────────────────────────────────────────────────────────
+
+function checkpointPath(scriptName: string): string {
+  return path.join(__dirname, 'reports', '.tmp', `${scriptName}.json`);
+}
+
+async function saveCheckpoint(cp: RunCheckpoint): Promise<void> {
+  const dir = path.dirname(checkpointPath(cp.script));
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(checkpointPath(cp.script), JSON.stringify(cp, null, 2));
+}
+
+async function loadCheckpoint(scriptName: string): Promise<RunCheckpoint | null> {
+  try {
+    const raw = await fs.readFile(checkpointPath(scriptName), 'utf-8');
+    return JSON.parse(raw) as RunCheckpoint;
+  } catch {
+    return null;
+  }
+}
+
+async function deleteCheckpoint(scriptName: string): Promise<void> {
+  await fs.unlink(checkpointPath(scriptName)).catch(() => {});
+}
+
+function makeEmptyCheckpoint(scriptName: string): RunCheckpoint {
+  const empty: AgentSnapshot = { messages: [], strategyState: { name: 'window', windowSize: 10 } };
+  return {
+    script: scriptName,
+    startedAt: new Date().toISOString(),
+    lastCompletedIndex: -1,
+    agentW: { ...empty }, agentF: { ...empty }, agentB: { ...empty },
+    resultsW: [], resultsF: [], resultsB: [],
+    judgeResults: [],
+    lastPromptW: null, lastPromptF: null, lastPromptB: null,
+  };
+}
+
+// ── Provider factory ──────────────────────────────────────────────────────────
 
 function createProvider(): LLMProvider {
   if (config.provider === 'gemini') return new GeminiProvider(config.gemini!);
   if (config.provider === 'lmstudio') return new LMStudioProvider(config.lmstudio!);
   return new DeepSeekProvider(config.deepseek!);
 }
-
 
 // ── Report builder ────────────────────────────────────────────────────────────
 
@@ -154,44 +225,32 @@ function buildReport(
   judgeResults: Array<ThreeWayJudgeResult | null>
 ): string {
   const date = new Date().toISOString().slice(0, 10);
-
   const totalW = resultsW.reduce((s, r) => s + r.promptTokens, 0);
   const totalF = resultsF.reduce((s, r) => s + r.promptTokens, 0);
   const totalB = resultsB.reduce((s, r) => s + r.promptTokens, 0);
-
   const scored = judgeResults.filter((r): r is ThreeWayJudgeResult => r !== null);
-  const avgOverall = (key: 'scoreA' | 'scoreB' | 'scoreC') =>
+  const avg = (key: 'scoreA' | 'scoreB' | 'scoreC') =>
     scored.length ? (scored.reduce((s, r) => s + r.overall[key], 0) / scored.length).toFixed(1) : 'N/A';
 
-  let md = `# Benchmark: ${script.name} — ${date}\n\n`;
-  md += `> ${script.description}\n\n`;
+  let md = `# Benchmark: ${script.name} — ${date}\n\n> ${script.description}\n\n`;
   md += `## Итоговое сравнение стратегий\n\n`;
-  md += `| | Sliding Window | Sticky Facts | Branching |\n`;
-  md += `|---|---|---|---|\n`;
-  md += `| Avg overall score | ${avgOverall('scoreA')}/10 | ${avgOverall('scoreB')}/10 | ${avgOverall('scoreC')}/10 |\n`;
+  md += `| | Sliding Window | Sticky Facts | Branching |\n|---|---|---|---|\n`;
+  md += `| Avg overall score | ${avg('scoreA')}/10 | ${avg('scoreB')}/10 | ${avg('scoreC')}/10 |\n`;
   md += `| Total prompt tokens | ${totalW.toLocaleString()} | ${totalF.toLocaleString()} | ${totalB.toLocaleString()} |\n`;
-
   if (totalB > 0) {
     const savW = ((1 - totalW / totalB) * 100).toFixed(1);
     const savF = ((1 - totalF / totalB) * 100).toFixed(1);
-    md += `| vs Branching (baseline) | ${parseFloat(savW) > 0 ? '-' : '+'}${Math.abs(parseFloat(savW))}% токенов | ${parseFloat(savF) > 0 ? '-' : '+'}${Math.abs(parseFloat(savF))}% токенов | baseline |\n`;
+    md += `| vs Branching (baseline) | ${savW}% | ${savF}% | baseline |\n`;
   }
   md += '\n';
 
   for (let i = 0; i < resultsW.length; i++) {
-    const w = resultsW[i];
-    const f = resultsF[i];
-    const b = resultsB[i];
+    const w = resultsW[i]; const f = resultsF[i]; const b = resultsB[i];
     const judge = judgeResults[i];
     const shortQ = w.message.length > 70 ? w.message.slice(0, 70) + '…' : w.message;
-
     md += `---\n\n## Сообщение ${i + 1}: "${shortQ}"\n\n`;
-    md += `**Sliding Window:**\n${w.response}\n\n`;
-    md += `**Sticky Facts:**\n${f.response}\n\n`;
-    md += `**Branching:**\n${b.response}\n\n`;
-
-    md += `| Критерий | Window | Facts | Branch |\n`;
-    md += `|---------|--------|-------|--------|\n`;
+    md += `**Window:**\n${w.response}\n\n**Facts:**\n${f.response}\n\n**Branch:**\n${b.response}\n\n`;
+    md += `| Критерий | Window | Facts | Branch |\n|---------|--------|-------|--------|\n`;
     if (judge) {
       md += `| Контекст | ${judge.context.scoreA}/10 | ${judge.context.scoreB}/10 | ${judge.context.scoreC}/10 |\n`;
       md += `| Качество | ${judge.quality.scoreA}/10 | ${judge.quality.scoreB}/10 | ${judge.quality.scoreC}/10 |\n`;
@@ -202,37 +261,59 @@ function buildReport(
     if (judge?.conclusion) md += `\n*Вывод: ${judge.conclusion}*\n`;
     md += '\n';
   }
-
   return md;
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
 
-async function runScript(script: BenchScript, judge: Judge): Promise<void> {
+async function runScript(script: BenchScript, judge: Judge, rl: readline.Interface): Promise<void> {
   const agentProvider = createProvider();
   const contextWindow = getContextWindow();
-
-  // Three agents, one per strategy
-  const agentW = new Agent(agentProvider);
-  agentW.setStrategy('window');
-
-  const agentF = new Agent(agentProvider);
-  agentF.setStrategy('facts');
-
-  const agentB = new Agent(agentProvider);
-  agentB.setStrategy('branch');
-
-  const resultsW: MessageResult[] = [];
-  const resultsF: MessageResult[] = [];
-  const resultsB: MessageResult[] = [];
-  const judgeResults: Array<ThreeWayJudgeResult | null> = [];
   const N = script.messages.length;
 
-  let lastPromptW: number | null = null;
-  let lastPromptF: number | null = null;
-  let lastPromptB: number | null = null;
+  const agentW = new Agent(agentProvider);
+  const agentF = new Agent(agentProvider);
+  const agentB = new Agent(agentProvider);
+  agentW.setStrategy('window');
+  agentF.setStrategy('facts');
+  agentB.setStrategy('branch');
 
-  for (let i = 0; i < N; i++) {
+  // ── Resume detection
+  const existing = await loadCheckpoint(script.name);
+  let cp = makeEmptyCheckpoint(script.name);
+  let startIndex = 0;
+
+  if (existing && existing.lastCompletedIndex >= 0) {
+    const answer = await new Promise<string>(resolve =>
+      rl.question(
+        `\n${label('◆', c.bold + c.yellow)} Found incomplete run (stopped after msg ${existing.lastCompletedIndex + 1}/${N}). Resume? [y/n] `,
+        resolve
+      )
+    );
+    if (answer.trim().toLowerCase() === 'y') {
+      cp = existing;
+      startIndex = existing.lastCompletedIndex + 1;
+      agentW.loadHistory(existing.agentW.messages);
+      agentW.setStrategyFromSession(existing.agentW.strategyState);
+      agentF.loadHistory(existing.agentF.messages);
+      agentF.setStrategyFromSession(existing.agentF.strategyState);
+      agentB.loadHistory(existing.agentB.messages);
+      agentB.setStrategyFromSession(existing.agentB.strategyState);
+      console.log(`${label('◆ Resuming', c.bold + c.green)} from message ${startIndex + 1}/${N}\n`);
+    }
+  }
+
+  const resultsW: MessageResult[] = [...cp.resultsW];
+  const resultsF: MessageResult[] = [...cp.resultsF];
+  const resultsB: MessageResult[] = [...cp.resultsB];
+  const judgeResults: Array<ThreeWayJudgeResult | null> = [...cp.judgeResults];
+  let lastPromptW = cp.lastPromptW;
+  let lastPromptF = cp.lastPromptF;
+  let lastPromptB = cp.lastPromptB;
+
+  const enqueue = makeEnqueue();
+
+  for (let i = startIndex; i < N; i++) {
     const { text: msg, checkpoint: isCheckpoint } = parseMessage(script.messages[i]);
     const isLast = i === N - 1;
 
@@ -241,72 +322,71 @@ async function runScript(script: BenchScript, judge: Judge): Promise<void> {
     console.log(`${label(`Сообщение ${i + 1}/${N}`, c.bold + c.dim)}${cpMark}`);
     console.log(`${label('you>', c.dim)} ${msg}\n`);
 
-    // ── Run Window
-    const stopW = startSpinner('window:  ');
-    let headerW = false;
+    // ── Parallel agent run
+    let usageW: UsageData | null = null;
+    let usageF: UsageData | null = null;
+    let usageB: UsageData | null = null;
     let responseW = '';
-    const usageW = await agentW.chat(msg, (chunk) => {
-      if (!headerW) { headerW = true; stopW(); process.stdout.write(`${label('window:  ', c.bold + c.cyan)}\n`); }
-      process.stdout.write(chunk);
-      responseW += chunk;
-    });
-    if (!headerW) stopW();
-    process.stdout.write('\n');
-    printTokenStats('window', usageW, contextWindow, lastPromptW);
-    lastPromptW = usageW?.prompt_tokens ?? null;
-    process.stdout.write('\n');
-    resultsW.push({ message: msg, response: responseW, promptTokens: usageW?.prompt_tokens ?? 0, completionTokens: usageW?.completion_tokens ?? 0 });
-
-    // ── Run Facts
-    const stopF = startSpinner('facts:   ');
-    let headerF = false;
     let responseF = '';
-    const usageF = await agentF.chat(msg, (chunk) => {
-      if (!headerF) { headerF = true; stopF(); process.stdout.write(`${label('facts:   ', c.bold + c.yellow)}\n`); }
-      process.stdout.write(chunk);
-      responseF += chunk;
-    });
-    if (!headerF) stopF();
-    process.stdout.write('\n');
-    printTokenStats('facts', usageF, contextWindow, lastPromptF);
-    lastPromptF = usageF?.prompt_tokens ?? null;
-    process.stdout.write('\n');
-    resultsF.push({ message: msg, response: responseF, promptTokens: usageF?.prompt_tokens ?? 0, completionTokens: usageF?.completion_tokens ?? 0 });
-
-    // ── Run Branch
-    const stopB = startSpinner('branch:  ');
-    let headerB = false;
     let responseB = '';
-    const usageB = await agentB.chat(msg, (chunk) => {
-      if (!headerB) { headerB = true; stopB(); process.stdout.write(`${label('branch:  ', c.bold + c.magenta)}\n`); }
-      process.stdout.write(chunk);
-      responseB += chunk;
-    });
-    if (!headerB) stopB();
+
+    try {
+      [usageW, usageF, usageB] = await Promise.all([
+        chatWithRetry(agentW, msg, chunk => { responseW += chunk; enqueue('W', c.cyan,    chunk); }),
+        chatWithRetry(agentF, msg, chunk => { responseF += chunk; enqueue('F', c.yellow,  chunk); }),
+        chatWithRetry(agentB, msg, chunk => { responseB += chunk; enqueue('B', c.magenta, chunk); }),
+      ]);
+    } catch (err) {
+      process.stdout.write('\n');
+      console.error(`\n${label('✗ Agent error', c.bold + c.red)} — saving checkpoint`);
+      await saveCheckpoint(cp);
+      throw err;
+    }
+
+    process.stdout.write('\n\n');
+    printTokenStats('W', usageW, contextWindow, lastPromptW);
+    printTokenStats('F', usageF, contextWindow, lastPromptF);
+    printTokenStats('B', usageB, contextWindow, lastPromptB);
     process.stdout.write('\n');
-    printTokenStats('branch', usageB, contextWindow, lastPromptB);
-    lastPromptB = usageB?.prompt_tokens ?? null;
-    process.stdout.write('\n');
+    lastPromptW = usageW?.prompt_tokens ?? lastPromptW;
+    lastPromptF = usageF?.prompt_tokens ?? lastPromptF;
+    lastPromptB = usageB?.prompt_tokens ?? lastPromptB;
+
+    resultsW.push({ message: msg, response: responseW, promptTokens: usageW?.prompt_tokens ?? 0, completionTokens: usageW?.completion_tokens ?? 0 });
+    resultsF.push({ message: msg, response: responseF, promptTokens: usageF?.prompt_tokens ?? 0, completionTokens: usageF?.completion_tokens ?? 0 });
     resultsB.push({ message: msg, response: responseB, promptTokens: usageB?.prompt_tokens ?? 0, completionTokens: usageB?.completion_tokens ?? 0 });
 
-    // ── Judge at checkpoints
-    if (!isCheckpoint && !isLast) {
-      process.stdout.write(`${c.dim}[судья пропущен — не контрольная точка]${c.reset}\n\n`);
-      judgeResults.push(null);
-    } else {
-      const stopJ = startSpinner('[судья]  ');
-      let judgeResult: ThreeWayJudgeResult | null = null;
+    // ── Judge
+    let judgeResult: ThreeWayJudgeResult | null = null;
+    if (isCheckpoint || isLast) {
+      const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+      let fi = 0;
+      process.stdout.write(`\r${label('[судья]', c.dim)} ${frames[0]}`);
+      const spin = setInterval(() => process.stdout.write(`\r${label('[судья]', c.dim)} ${frames[fi++ % frames.length]}`), 80);
       try {
         judgeResult = await judge.evaluateThreeWay(msg, responseW, responseF, responseB, script.judgePrompt);
-      } catch {
-        // silently skip
-      }
-      stopJ();
+      } catch { /* skip */ }
+      clearInterval(spin);
+      process.stdout.write('\x1b[2K\r');
       if (judgeResult) {
         printThreeWayTable(judgeResult, usageW?.prompt_tokens ?? 0, usageF?.prompt_tokens ?? 0, usageB?.prompt_tokens ?? 0);
       }
-      judgeResults.push(judgeResult);
+    } else {
+      process.stdout.write(`${c.dim}[судья пропущен — не контрольная точка]${c.reset}\n\n`);
     }
+    judgeResults.push(judgeResult);
+
+    // ── Save checkpoint
+    cp = {
+      ...cp,
+      lastCompletedIndex: i,
+      agentW: { messages: agentW.messages, strategyState: agentW.strategyState },
+      agentF: { messages: agentF.messages, strategyState: agentF.strategyState },
+      agentB: { messages: agentB.messages, strategyState: agentB.strategyState },
+      resultsW, resultsF, resultsB, judgeResults,
+      lastPromptW, lastPromptF, lastPromptB,
+    };
+    await saveCheckpoint(cp);
   }
 
   // ── Summary
@@ -314,23 +394,21 @@ async function runScript(script: BenchScript, judge: Judge): Promise<void> {
   const totalW = resultsW.reduce((s, r) => s + r.promptTokens, 0);
   const totalF = resultsF.reduce((s, r) => s + r.promptTokens, 0);
   const totalB = resultsB.reduce((s, r) => s + r.promptTokens, 0);
+  const savW = totalB > 0 ? ((1 - totalW / totalB) * 100).toFixed(1) : '—';
+  const savF = totalB > 0 ? ((1 - totalF / totalB) * 100).toFixed(1) : '—';
 
   const width = Math.min(process.stdout.columns ?? 70, 70);
   process.stdout.write(`\n${c.bold}${'═'.repeat(width)}${c.reset}\n`);
   console.log(label(`Results: ${script.name}`, c.bold));
-
   if (scored.length) {
     const avgW = (scored.reduce((s, r) => s + r.overall.scoreA, 0) / scored.length).toFixed(1);
     const avgF = (scored.reduce((s, r) => s + r.overall.scoreB, 0) / scored.length).toFixed(1);
     const avgB = (scored.reduce((s, r) => s + r.overall.scoreC, 0) / scored.length).toFixed(1);
     console.log(`Quality:  window=${label(`${avgW}/10`, c.bold)}  facts=${label(`${avgF}/10`, c.bold)}  branch=${label(`${avgB}/10`, c.bold)}`);
   }
-  const savW = totalB > 0 ? ((1 - totalW / totalB) * 100).toFixed(1) : '—';
-  const savF = totalB > 0 ? ((1 - totalF / totalB) * 100).toFixed(1) : '—';
-  console.log(`Tokens:   window=${label(totalW.toLocaleString(), c.bold)}  facts=${label(totalF.toLocaleString(), c.bold)}  branch=${label(totalB.toLocaleString(), c.bold)} (baseline)`);
+  console.log(`Tokens:   window=${label(totalW.toLocaleString(), c.bold)}  facts=${label(totalF.toLocaleString(), c.bold)}  branch=${label(totalB.toLocaleString(), c.bold)}`);
   console.log(`Savings vs branch:  window=${label(`${savW}%`, c.bold)}  facts=${label(`${savF}%`, c.bold)}`);
 
-  // ── Save report
   const report = buildReport(script, resultsW, resultsF, resultsB, judgeResults);
   const reportsDir = path.join(__dirname, 'reports');
   await fs.mkdir(reportsDir, { recursive: true });
@@ -339,6 +417,8 @@ async function runScript(script: BenchScript, judge: Judge): Promise<void> {
   await fs.writeFile(reportPath, report, 'utf-8');
   console.log(`Report:   ${label(reportPath, c.dim)}`);
   process.stdout.write(`${c.bold}${'═'.repeat(width)}${c.reset}\n`);
+
+  await deleteCheckpoint(script.name);
 }
 
 // ── Script picker ─────────────────────────────────────────────────────────────
@@ -347,8 +427,7 @@ async function loadScripts(scriptsDir: string): Promise<BenchScript[]> {
   const files = (await fs.readdir(scriptsDir)).filter(f => f.endsWith('.json'));
   const scripts: BenchScript[] = [];
   for (const file of files) {
-    const raw = await fs.readFile(path.join(scriptsDir, file), 'utf-8');
-    scripts.push(JSON.parse(raw));
+    scripts.push(JSON.parse(await fs.readFile(path.join(scriptsDir, file), 'utf-8')));
   }
   return scripts;
 }
@@ -356,20 +435,13 @@ async function loadScripts(scriptsDir: string): Promise<BenchScript[]> {
 function pickScript(rl: readline.Interface, scripts: BenchScript[]): Promise<BenchScript> {
   console.log('\nВыбери сценарий для сравнения стратегий:');
   scripts.forEach((s, i) => {
-    const num  = label(`[${i + 1}]`, c.bold + c.cyan);
-    const name = label(s.name, c.bold);
-    const desc = label(`(${s.description})`, c.dim);
-    console.log(`  ${num} ${name} ${desc}`);
+    console.log(`  ${label(`[${i + 1}]`, c.bold + c.cyan)} ${label(s.name, c.bold)} ${label(`(${s.description})`, c.dim)}`);
   });
-
   return new Promise((resolve) => {
     const ask = () => {
       rl.question('> ', (input) => {
         const num = parseInt(input.trim(), 10);
-        if (!isNaN(num) && num >= 1 && num <= scripts.length) {
-          resolve(scripts[num - 1]);
-          return;
-        }
+        if (!isNaN(num) && num >= 1 && num <= scripts.length) { resolve(scripts[num - 1]); return; }
         console.log(`Enter 1–${scripts.length}.`);
         ask();
       });
@@ -383,33 +455,35 @@ function pickScript(rl: readline.Interface, scripts: BenchScript[]): Promise<Ben
 async function main() {
   const arg = process.argv[2];
   const scriptsDir = path.join(__dirname, 'scripts');
-
   const judge = Judge.create();
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+  let script: BenchScript;
 
   if (arg) {
     const scriptPath = path.join(scriptsDir, `${arg}.json`);
-    let raw: string;
     try {
-      raw = await fs.readFile(scriptPath, 'utf-8');
+      script = JSON.parse(await fs.readFile(scriptPath, 'utf-8'));
     } catch {
       console.error(`Script not found: ${scriptPath}`);
+      rl.close();
       process.exit(1);
     }
-    await runScript(JSON.parse(raw), judgeProvider);
-    return;
+  } else {
+    const scripts = await loadScripts(scriptsDir);
+    if (scripts.length === 0) {
+      console.error('No benchmark scripts found in bench/scripts/');
+      rl.close();
+      process.exit(1);
+    }
+    script = await pickScript(rl, scripts);
   }
 
-  const scripts = await loadScripts(scriptsDir);
-  if (scripts.length === 0) {
-    console.error('No benchmark scripts found in bench/scripts/');
-    process.exit(1);
+  try {
+    await runScript(script, judge, rl);
+  } finally {
+    rl.close();
   }
-
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const selected = await pickScript(rl, scripts);
-  rl.close();
-
-  await runScript(selected, judge);
 }
 
 main().catch(err => {
