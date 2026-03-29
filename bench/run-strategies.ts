@@ -8,6 +8,7 @@ import { GeminiProvider } from '../src/providers/gemini';
 import { LMStudioProvider } from '../src/providers/lmstudio';
 import { LLMProvider, Message, StrategyState, UsageData } from '../src/types';
 import { Judge, ThreeWayJudgeResult } from './judge';
+import { MultiColumnRenderer } from './renderer';
 
 // ── Visual utilities ──────────────────────────────────────────────────────────
 
@@ -137,22 +138,6 @@ interface RunCheckpoint {
   lastPromptW: number | null;
   lastPromptF: number | null;
   lastPromptB: number | null;
-}
-
-// ── Parallel spinner ──────────────────────────────────────────────────────────
-
-function startParallelSpinner(labels: string[]): () => void {
-  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-  let i = 0;
-  const tags = labels.join(' ');
-  const render = () =>
-    process.stdout.write(`\r${c.dim}${frames[i++ % frames.length]} ${tags}${c.reset}`);
-  render();
-  const timer = setInterval(render, 80);
-  return () => {
-    clearInterval(timer);
-    process.stdout.write('\x1b[2K\r');
-  };
 }
 
 // ── Retry helper ──────────────────────────────────────────────────────────────
@@ -321,7 +306,7 @@ async function runScript(script: BenchScript, judge: Judge, rl: readline.Interfa
     console.log(`${label(`Сообщение ${i + 1}/${N}`, c.bold + c.dim)}${cpMark}`);
     console.log(`${label('you>', c.dim)} ${msg}\n`);
 
-    // ── Parallel agent run (buffered, shown sequentially after completion)
+    // ── Parallel agent run with live side-by-side streaming
     let usageW: UsageData | null = null;
     let usageF: UsageData | null = null;
     let usageB: UsageData | null = null;
@@ -329,29 +314,36 @@ async function runScript(script: BenchScript, judge: Judge, rl: readline.Interfa
     let responseF = '';
     let responseB = '';
 
-    const stopSpinner = startParallelSpinner(['sliding-window', 'sticky-facts', 'branching']);
+    const renderer = new MultiColumnRenderer(
+      ['sliding-window', 'sticky-facts', 'branching'],
+      [c.cyan, c.yellow, c.magenta]
+    );
+
+    const runAgent = async (agent: Agent, colIdx: number): Promise<{ response: string; usage: UsageData | null }> => {
+      let response = '';
+      const usage = await chatWithRetry(agent, msg, chunk => {
+        response += chunk;
+        renderer.append(colIdx, chunk);
+      });
+      renderer.markDone(colIdx, usage?.completion_tokens ?? undefined);
+      return { response, usage };
+    };
+
     try {
-      [usageW, usageF, usageB] = await Promise.all([
-        chatWithRetry(agentW, msg, chunk => { responseW += chunk; }),
-        chatWithRetry(agentF, msg, chunk => { responseF += chunk; }),
-        chatWithRetry(agentB, msg, chunk => { responseB += chunk; }),
+      const [rW, rF, rB] = await Promise.all([
+        runAgent(agentW, 0),
+        runAgent(agentF, 1),
+        runAgent(agentB, 2),
       ]);
+      responseW = rW.response; responseF = rF.response; responseB = rB.response;
+      usageW = rW.usage; usageF = rF.usage; usageB = rB.usage;
     } catch (err) {
-      stopSpinner();
+      renderer.clear();
       console.error(`\n${label('✗ Agent error', c.bold + c.red)} — saving checkpoint`);
       await saveCheckpoint(cp);
       throw err;
     }
-    stopSpinner();
-
-    // Print buffered responses sequentially
-    for (const [lbl, color, response] of [
-      ['sliding-window', c.cyan,    responseW],
-      ['sticky-facts',   c.yellow,  responseF],
-      ['branching',      c.magenta, responseB],
-    ] as const) {
-      process.stdout.write(`${label(lbl + ':', c.bold + color)}\n${response}\n\n`);
-    }
+    renderer.clear();
 
     printTokenStats('sliding-window', usageW, contextWindow, lastPromptW);
     printTokenStats('sticky-facts',   usageF, contextWindow, lastPromptF);
