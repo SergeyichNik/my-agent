@@ -139,18 +139,19 @@ interface RunCheckpoint {
   lastPromptB: number | null;
 }
 
-// ── Interleaved streaming output ──────────────────────────────────────────────
+// ── Parallel spinner ──────────────────────────────────────────────────────────
 
-function makeEnqueue() {
-  type Entry = { tag: string; color: string; chunk: string };
-  const queue: Entry[] = [];
-
-  return function enqueue(tag: string, color: string, chunk: string): void {
-    queue.push({ tag, color, chunk });
-    while (queue.length > 0) {
-      const e = queue.shift()!;
-      process.stdout.write(`${e.color}[${e.tag}]${c.reset} ${e.chunk}`);
-    }
+function startParallelSpinner(labels: string[]): () => void {
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  let i = 0;
+  const tags = labels.join(' ');
+  const render = () =>
+    process.stdout.write(`\r${c.dim}${frames[i++ % frames.length]} ${tags}${c.reset}`);
+  render();
+  const timer = setInterval(render, 80);
+  return () => {
+    clearInterval(timer);
+    process.stdout.write('\x1b[2K\r');
   };
 }
 
@@ -311,8 +312,6 @@ async function runScript(script: BenchScript, judge: Judge, rl: readline.Interfa
   let lastPromptF = cp.lastPromptF;
   let lastPromptB = cp.lastPromptB;
 
-  const enqueue = makeEnqueue();
-
   for (let i = startIndex; i < N; i++) {
     const { text: msg, checkpoint: isCheckpoint } = parseMessage(script.messages[i]);
     const isLast = i === N - 1;
@@ -322,7 +321,7 @@ async function runScript(script: BenchScript, judge: Judge, rl: readline.Interfa
     console.log(`${label(`Сообщение ${i + 1}/${N}`, c.bold + c.dim)}${cpMark}`);
     console.log(`${label('you>', c.dim)} ${msg}\n`);
 
-    // ── Parallel agent run
+    // ── Parallel agent run (buffered, shown sequentially after completion)
     let usageW: UsageData | null = null;
     let usageF: UsageData | null = null;
     let usageB: UsageData | null = null;
@@ -330,20 +329,30 @@ async function runScript(script: BenchScript, judge: Judge, rl: readline.Interfa
     let responseF = '';
     let responseB = '';
 
+    const stopSpinner = startParallelSpinner(['window', 'facts', 'branch']);
     try {
       [usageW, usageF, usageB] = await Promise.all([
-        chatWithRetry(agentW, msg, chunk => { responseW += chunk; enqueue('W', c.cyan,    chunk); }),
-        chatWithRetry(agentF, msg, chunk => { responseF += chunk; enqueue('F', c.yellow,  chunk); }),
-        chatWithRetry(agentB, msg, chunk => { responseB += chunk; enqueue('B', c.magenta, chunk); }),
+        chatWithRetry(agentW, msg, chunk => { responseW += chunk; }),
+        chatWithRetry(agentF, msg, chunk => { responseF += chunk; }),
+        chatWithRetry(agentB, msg, chunk => { responseB += chunk; }),
       ]);
     } catch (err) {
-      process.stdout.write('\n');
+      stopSpinner();
       console.error(`\n${label('✗ Agent error', c.bold + c.red)} — saving checkpoint`);
       await saveCheckpoint(cp);
       throw err;
     }
+    stopSpinner();
 
-    process.stdout.write('\n\n');
+    // Print buffered responses sequentially
+    for (const [lbl, color, response] of [
+      ['window', c.cyan,    responseW],
+      ['facts',  c.yellow,  responseF],
+      ['branch', c.magenta, responseB],
+    ] as const) {
+      process.stdout.write(`${label(lbl + ':', c.bold + color)}\n${response}\n\n`);
+    }
+
     printTokenStats('W', usageW, contextWindow, lastPromptW);
     printTokenStats('F', usageF, contextWindow, lastPromptF);
     printTokenStats('B', usageB, contextWindow, lastPromptB);
