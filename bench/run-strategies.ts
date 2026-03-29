@@ -67,7 +67,7 @@ function printThreeWayTable(judge: ThreeWayJudgeResult, tokensW: number, tokensF
   const div = `  ${'─'.repeat(colW)}┼${'─'.repeat(scoreW)}┼${'─'.repeat(scoreW)}┼${'─'.repeat(scoreW)}`;
 
   process.stdout.write(`\n${label('  [судья]', c.dim)}\n`);
-  process.stdout.write(`${c.dim}  ${'Критерий'.padEnd(colW)}│${'Window'.padStart(scoreW)}│${'Facts'.padStart(scoreW)}│${'Branch'.padStart(scoreW)}${c.reset}\n`);
+  process.stdout.write(`${c.dim}  ${'Критерий'.padEnd(colW)}│${'s-window'.padStart(scoreW)}│${'s-facts'.padStart(scoreW)}│${'branching'.padStart(scoreW)}${c.reset}\n`);
   process.stdout.write(`${c.dim}${div}${c.reset}\n`);
 
   for (const [name, key] of [
@@ -329,7 +329,7 @@ async function runScript(script: BenchScript, judge: Judge, rl: readline.Interfa
     let responseF = '';
     let responseB = '';
 
-    const stopSpinner = startParallelSpinner(['window', 'facts', 'branch']);
+    const stopSpinner = startParallelSpinner(['sliding-window', 'sticky-facts', 'branching']);
     try {
       [usageW, usageF, usageB] = await Promise.all([
         chatWithRetry(agentW, msg, chunk => { responseW += chunk; }),
@@ -346,16 +346,16 @@ async function runScript(script: BenchScript, judge: Judge, rl: readline.Interfa
 
     // Print buffered responses sequentially
     for (const [lbl, color, response] of [
-      ['window', c.cyan,    responseW],
-      ['facts',  c.yellow,  responseF],
-      ['branch', c.magenta, responseB],
+      ['sliding-window', c.cyan,    responseW],
+      ['sticky-facts',   c.yellow,  responseF],
+      ['branching',      c.magenta, responseB],
     ] as const) {
       process.stdout.write(`${label(lbl + ':', c.bold + color)}\n${response}\n\n`);
     }
 
-    printTokenStats('W', usageW, contextWindow, lastPromptW);
-    printTokenStats('F', usageF, contextWindow, lastPromptF);
-    printTokenStats('B', usageB, contextWindow, lastPromptB);
+    printTokenStats('sliding-window', usageW, contextWindow, lastPromptW);
+    printTokenStats('sticky-facts',   usageF, contextWindow, lastPromptF);
+    printTokenStats('branching',      usageB, contextWindow, lastPromptB);
     process.stdout.write('\n');
     lastPromptW = usageW?.prompt_tokens ?? lastPromptW;
     lastPromptF = usageF?.prompt_tokens ?? lastPromptF;
