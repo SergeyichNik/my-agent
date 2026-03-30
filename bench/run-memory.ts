@@ -357,10 +357,10 @@ function fmtScore(n: number, isWinner: boolean, width: number): string {
 function printJudgeTable(judge: JudgeResult, tokensA: number, tokensB: number): void {
   const colW = 24;
   const scoreW = 12;
-  const boxWidth = colW + scoreW * 2 + 3;
+  const innerWidth = colW + scoreW * 2 + 4;
 
   const title = ' ◆ СУДЬЯ ';
-  const titlePad = Math.max(0, boxWidth - title.length - 2);
+  const titlePad = Math.max(0, innerWidth - title.length);
   process.stdout.write(`\n┌${c.bold}${c.yellow}${title}${c.reset}${c.dim}${'─'.repeat(titlePad)}┐${c.reset}\n`);
 
   const h = (s: string) => `${c.dim}${s.padStart(scoreW)}${c.reset}`;
@@ -392,7 +392,7 @@ function printJudgeTable(judge: JudgeResult, tokensA: number, tokensB: number): 
   process.stdout.write(
     `${c.dim}│  ${'prompt_tokens'.padEnd(colW)}│${tokensA.toLocaleString().padStart(scoreW)}│${tokensB.toLocaleString().padStart(scoreW)}│${c.reset}\n`
   );
-  process.stdout.write(`${c.dim}└${'─'.repeat(boxWidth)}┘${c.reset}\n`);
+  process.stdout.write(`${c.dim}└${'─'.repeat(innerWidth)}┘${c.reset}\n`);
 
   if (judge.conclusion) {
     process.stdout.write(`\n  ${c.bold}${c.yellow}Вывод:${c.reset} ${judge.conclusion}\n`);

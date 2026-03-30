@@ -79,11 +79,10 @@ function fmtScore(n: number, isWinner: boolean, width: number): string {
 function printThreeWayTable(judge: ThreeWayJudgeResult, tokensW: number, tokensF: number, tokensB: number): void {
   const colW = 22;
   const scoreW = 12;
-  const termWidth = Math.min(process.stdout.columns || 80, colW + scoreW * 3 + 10);
-  const boxWidth = colW + scoreW * 3 + 4;
+  const innerWidth = colW + scoreW * 3 + 5;
 
   const title = ' ◆ СУДЬЯ ';
-  const titlePad = Math.max(0, boxWidth - title.length - 2);
+  const titlePad = Math.max(0, innerWidth - title.length);
   const topLine = `┌${c.bold}${c.yellow}${title}${c.reset}${c.dim}${'─'.repeat(titlePad)}┐${c.reset}`;
 
   process.stdout.write(`\n${topLine}\n`);
@@ -124,7 +123,7 @@ function printThreeWayTable(judge: ThreeWayJudgeResult, tokensW: number, tokensF
   process.stdout.write(
     `${c.dim}│  ${'prompt_tokens'.padEnd(colW)}│${tokensW.toLocaleString().padStart(scoreW)}│${tokensF.toLocaleString().padStart(scoreW)}│${tokensB.toLocaleString().padStart(scoreW)}│${c.reset}\n`
   );
-  process.stdout.write(`${c.dim}└${'─'.repeat(boxWidth)}┘${c.reset}\n`);
+  process.stdout.write(`${c.dim}└${'─'.repeat(innerWidth)}┘${c.reset}\n`);
 
   if (judge.conclusion) {
     process.stdout.write(`\n  ${c.bold}${c.yellow}Вывод:${c.reset} ${judge.conclusion}\n`);
