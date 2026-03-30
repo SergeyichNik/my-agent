@@ -346,10 +346,12 @@ function scoreColor(n: number): string {
   return c.red;
 }
 
-function fmtScore(n: number, isWinner: boolean): string {
+function fmtScore(n: number, isWinner: boolean, width: number): string {
   const col = scoreColor(n);
   const mark = isWinner ? ' ✓' : '  ';
-  return `${col}${isWinner ? c.bold : ''}${n}/10${mark}${c.reset}`;
+  const visible = `${n}/10${mark}`;
+  const padded = visible.padStart(width);
+  return `${col}${isWinner ? c.bold : ''}${padded}${c.reset}`;
 }
 
 function printJudgeTable(judge: JudgeResult, tokensA: number, tokensB: number): void {
@@ -373,8 +375,8 @@ function printJudgeTable(judge: JudgeResult, tokensA: number, tokensB: number): 
   ] as const) {
     const s = judge[key];
     const maxS = Math.max(s.scoreA, s.scoreB);
-    const cellA = fmtScore(s.scoreA, s.scoreA === maxS).padStart(scoreW + 20);
-    const cellB = fmtScore(s.scoreB, s.scoreB === maxS).padStart(scoreW + 20);
+    const cellA = fmtScore(s.scoreA, s.scoreA === maxS, scoreW);
+    const cellB = fmtScore(s.scoreB, s.scoreB === maxS, scoreW);
     process.stdout.write(`${c.dim}│  ${c.reset}${name.padEnd(colW)}${c.dim}│${c.reset}${cellA}${c.dim}│${c.reset}${cellB}${c.dim}│${c.reset}\n`);
   }
 
@@ -382,8 +384,8 @@ function printJudgeTable(judge: JudgeResult, tokensA: number, tokensB: number): 
 
   const ov = judge.overall;
   const maxOv = Math.max(ov.scoreA, ov.scoreB);
-  const ovA = fmtScore(ov.scoreA, ov.scoreA === maxOv).padStart(scoreW + 20);
-  const ovB = fmtScore(ov.scoreB, ov.scoreB === maxOv).padStart(scoreW + 20);
+  const ovA = fmtScore(ov.scoreA, ov.scoreA === maxOv, scoreW);
+  const ovB = fmtScore(ov.scoreB, ov.scoreB === maxOv, scoreW);
   process.stdout.write(`${c.dim}│  ${c.reset}${c.bold}${'Итог'.padEnd(colW)}${c.reset}${c.dim}│${c.reset}${ovA}${c.dim}│${c.reset}${ovB}${c.dim}│${c.reset}\n`);
 
   process.stdout.write(div + '\n');
