@@ -299,7 +299,7 @@ async function main(): Promise<void> {
     }
 
     // Judge the session
-    process.stdout.write(`\n${label('[судья]', c.dim)} evaluating…\n`);
+    process.stdout.write(`\n${c.bold}${c.yellow}◆ Судья оценивает…${c.reset}\n`);
     let judgeResult: JudgeResult | null = null;
     try {
       judgeResult = await judge.evaluate(
@@ -340,14 +340,31 @@ async function main(): Promise<void> {
   console.log(`${label('✓ Done', c.bold + c.green)} Report saved to ${reportPath}\n`);
 }
 
+function scoreColor(n: number): string {
+  if (n >= 8) return c.green;
+  if (n >= 6) return c.yellow;
+  return c.red;
+}
+
+function fmtScore(n: number, isWinner: boolean): string {
+  const col = scoreColor(n);
+  const mark = isWinner ? ' ✓' : '  ';
+  return `${col}${isWinner ? c.bold : ''}${n}/10${mark}${c.reset}`;
+}
+
 function printJudgeTable(judge: JudgeResult, tokensA: number, tokensB: number): void {
   const colW = 24;
   const scoreW = 12;
-  const div = `  ${'─'.repeat(colW)}┼${'─'.repeat(scoreW)}┼${'─'.repeat(scoreW)}`;
+  const boxWidth = colW + scoreW * 2 + 3;
 
-  process.stdout.write(`\n${label('  [судья]', c.dim)}\n`);
-  process.stdout.write(`${c.dim}  ${'Критерий'.padEnd(colW)}│${'memory'.padStart(scoreW)}│${'window'.padStart(scoreW)}${c.reset}\n`);
-  process.stdout.write(`${c.dim}${div}${c.reset}\n`);
+  const title = ' ◆ СУДЬЯ ';
+  const titlePad = Math.max(0, boxWidth - title.length - 2);
+  process.stdout.write(`\n┌${c.bold}${c.yellow}${title}${c.reset}${c.dim}${'─'.repeat(titlePad)}┐${c.reset}\n`);
+
+  const h = (s: string) => `${c.dim}${s.padStart(scoreW)}${c.reset}`;
+  process.stdout.write(`${c.dim}│  ${'Критерий'.padEnd(colW)}│${h('memory')}│${h('window')}│${c.reset}\n`);
+  const div = `${c.dim}│  ${'─'.repeat(colW)}┼${'─'.repeat(scoreW)}┼${'─'.repeat(scoreW)}┤${c.reset}`;
+  process.stdout.write(div + '\n');
 
   for (const [name, key] of [
     ['Контекст', 'context'],
@@ -355,20 +372,28 @@ function printJudgeTable(judge: JudgeResult, tokensA: number, tokensB: number): 
     ['Полнота',   'completeness'],
   ] as const) {
     const s = judge[key];
-    process.stdout.write(
-      `${c.dim}  ${name.padEnd(colW)}│${`${s.scoreA}/10`.padStart(scoreW)}│${`${s.scoreB}/10`.padStart(scoreW)}${c.reset}\n`
-    );
+    const maxS = Math.max(s.scoreA, s.scoreB);
+    const cellA = fmtScore(s.scoreA, s.scoreA === maxS).padStart(scoreW + 20);
+    const cellB = fmtScore(s.scoreB, s.scoreB === maxS).padStart(scoreW + 20);
+    process.stdout.write(`${c.dim}│  ${c.reset}${name.padEnd(colW)}${c.dim}│${c.reset}${cellA}${c.dim}│${c.reset}${cellB}${c.dim}│${c.reset}\n`);
   }
-  process.stdout.write(`${c.dim}${div}${c.reset}\n`);
+
+  process.stdout.write(div + '\n');
+
+  const ov = judge.overall;
+  const maxOv = Math.max(ov.scoreA, ov.scoreB);
+  const ovA = fmtScore(ov.scoreA, ov.scoreA === maxOv).padStart(scoreW + 20);
+  const ovB = fmtScore(ov.scoreB, ov.scoreB === maxOv).padStart(scoreW + 20);
+  process.stdout.write(`${c.dim}│  ${c.reset}${c.bold}${'Итог'.padEnd(colW)}${c.reset}${c.dim}│${c.reset}${ovA}${c.dim}│${c.reset}${ovB}${c.dim}│${c.reset}\n`);
+
+  process.stdout.write(div + '\n');
   process.stdout.write(
-    `  ${c.bold}${'Итог'.padEnd(colW)}${c.reset}${c.dim}│${`${judge.overall.scoreA}/10`.padStart(scoreW)}│${`${judge.overall.scoreB}/10`.padStart(scoreW)}${c.reset}\n`
+    `${c.dim}│  ${'prompt_tokens'.padEnd(colW)}│${tokensA.toLocaleString().padStart(scoreW)}│${tokensB.toLocaleString().padStart(scoreW)}│${c.reset}\n`
   );
-  process.stdout.write(`${c.dim}${div}${c.reset}\n`);
-  process.stdout.write(
-    `${c.dim}  ${'prompt_tokens'.padEnd(colW)}│${tokensA.toLocaleString().padStart(scoreW)}│${tokensB.toLocaleString().padStart(scoreW)}${c.reset}\n`
-  );
+  process.stdout.write(`${c.dim}└${'─'.repeat(boxWidth)}┘${c.reset}\n`);
+
   if (judge.conclusion) {
-    process.stdout.write(`\n${c.dim}  Вывод: ${judge.conclusion}${c.reset}\n`);
+    process.stdout.write(`\n  ${c.bold}${c.yellow}Вывод:${c.reset} ${judge.conclusion}\n`);
   }
   process.stdout.write('\n');
 }

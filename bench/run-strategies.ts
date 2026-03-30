@@ -62,14 +62,37 @@ function printTokenStats(tag: string, usage: UsageData | null, contextWindow: nu
   );
 }
 
+function scoreColor(n: number): string {
+  if (n >= 8) return c.green;
+  if (n >= 6) return c.yellow;
+  return c.red;
+}
+
+function fmtScore(n: number, isWinner: boolean): string {
+  const col = scoreColor(n);
+  const mark = isWinner ? ' ✓' : '  ';
+  return `${col}${isWinner ? c.bold : ''}${n}/10${mark}${c.reset}`;
+}
+
 function printThreeWayTable(judge: ThreeWayJudgeResult, tokensW: number, tokensF: number, tokensB: number): void {
   const colW = 22;
-  const scoreW = 10;
-  const div = `  ${'─'.repeat(colW)}┼${'─'.repeat(scoreW)}┼${'─'.repeat(scoreW)}┼${'─'.repeat(scoreW)}`;
+  const scoreW = 12;
+  const termWidth = Math.min(process.stdout.columns || 80, colW + scoreW * 3 + 10);
+  const boxWidth = colW + scoreW * 3 + 4;
 
-  process.stdout.write(`\n${label('  [судья]', c.dim)}\n`);
-  process.stdout.write(`${c.dim}  ${'Критерий'.padEnd(colW)}│${'s-window'.padStart(scoreW)}│${'s-facts'.padStart(scoreW)}│${'branching'.padStart(scoreW)}${c.reset}\n`);
-  process.stdout.write(`${c.dim}${div}${c.reset}\n`);
+  const title = ' ◆ СУДЬЯ ';
+  const titlePad = Math.max(0, boxWidth - title.length - 2);
+  const topLine = `┌${c.bold}${c.yellow}${title}${c.reset}${c.dim}${'─'.repeat(titlePad)}┐${c.reset}`;
+
+  process.stdout.write(`\n${topLine}\n`);
+
+  // Header row
+  const h = (s: string) => `${c.dim}${s.padStart(scoreW)}${c.reset}`;
+  process.stdout.write(
+    `${c.dim}│  ${'Критерий'.padEnd(colW)}│${h('s-window')}│${h('s-facts')}│${h('branching')}│${c.reset}\n`
+  );
+  const div = `${c.dim}│  ${'─'.repeat(colW)}┼${'─'.repeat(scoreW)}┼${'─'.repeat(scoreW)}┼${'─'.repeat(scoreW)}┤${c.reset}`;
+  process.stdout.write(div + '\n');
 
   for (const [name, key] of [
     ['Сохранение контекста', 'context'],
@@ -77,20 +100,32 @@ function printThreeWayTable(judge: ThreeWayJudgeResult, tokensW: number, tokensF
     ['Полнота',              'completeness'],
   ] as const) {
     const s = judge[key];
-    process.stdout.write(
-      `${c.dim}  ${name.padEnd(colW)}│${`${s.scoreA}/10`.padStart(scoreW)}│${`${s.scoreB}/10`.padStart(scoreW)}│${`${s.scoreC}/10`.padStart(scoreW)}${c.reset}\n`
-    );
+    const maxS = Math.max(s.scoreA, s.scoreB, s.scoreC);
+    const cellA = fmtScore(s.scoreA, s.scoreA === maxS).padStart(scoreW + 20);
+    const cellB = fmtScore(s.scoreB, s.scoreB === maxS).padStart(scoreW + 20);
+    const cellC = fmtScore(s.scoreC, s.scoreC === maxS).padStart(scoreW + 20);
+    process.stdout.write(`${c.dim}│  ${c.reset}${name.padEnd(colW)}${c.dim}│${c.reset}${cellA}${c.dim}│${c.reset}${cellB}${c.dim}│${c.reset}${cellC}${c.dim}│${c.reset}\n`);
   }
-  process.stdout.write(`${c.dim}${div}${c.reset}\n`);
+
+  process.stdout.write(div + '\n');
+
+  // Overall row
+  const ov = judge.overall;
+  const maxOv = Math.max(ov.scoreA, ov.scoreB, ov.scoreC);
+  const ovA = fmtScore(ov.scoreA, ov.scoreA === maxOv).padStart(scoreW + 20);
+  const ovB = fmtScore(ov.scoreB, ov.scoreB === maxOv).padStart(scoreW + 20);
+  const ovC = fmtScore(ov.scoreC, ov.scoreC === maxOv).padStart(scoreW + 20);
+  process.stdout.write(`${c.dim}│  ${c.reset}${c.bold}${'Итог'.padEnd(colW)}${c.reset}${c.dim}│${c.reset}${ovA}${c.dim}│${c.reset}${ovB}${c.dim}│${c.reset}${ovC}${c.dim}│${c.reset}\n`);
+
+  // Tokens row
+  process.stdout.write(div + '\n');
   process.stdout.write(
-    `  ${c.bold}${'Итог'.padEnd(colW)}${c.reset}${c.dim}│${`${judge.overall.scoreA}/10`.padStart(scoreW)}│${`${judge.overall.scoreB}/10`.padStart(scoreW)}│${`${judge.overall.scoreC}/10`.padStart(scoreW)}${c.reset}\n`
+    `${c.dim}│  ${'prompt_tokens'.padEnd(colW)}│${tokensW.toLocaleString().padStart(scoreW)}│${tokensF.toLocaleString().padStart(scoreW)}│${tokensB.toLocaleString().padStart(scoreW)}│${c.reset}\n`
   );
-  process.stdout.write(`${c.dim}${div}${c.reset}\n`);
-  process.stdout.write(
-    `${c.dim}  ${'prompt_tokens'.padEnd(colW)}│${tokensW.toLocaleString().padStart(scoreW)}│${tokensF.toLocaleString().padStart(scoreW)}│${tokensB.toLocaleString().padStart(scoreW)}${c.reset}\n`
-  );
+  process.stdout.write(`${c.dim}└${'─'.repeat(boxWidth)}┘${c.reset}\n`);
+
   if (judge.conclusion) {
-    process.stdout.write(`\n${c.dim}  Вывод: ${judge.conclusion}${c.reset}\n`);
+    process.stdout.write(`\n  ${c.bold}${c.yellow}Вывод:${c.reset} ${judge.conclusion}\n`);
   }
   process.stdout.write('\n');
 }
@@ -362,8 +397,8 @@ async function runScript(script: BenchScript, judge: Judge, rl: readline.Interfa
     if (isCheckpoint || isLast) {
       const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
       let fi = 0;
-      process.stdout.write(`\r${label('[судья]', c.dim)} ${frames[0]}`);
-      const spin = setInterval(() => process.stdout.write(`\r${label('[судья]', c.dim)} ${frames[fi++ % frames.length]}`), 80);
+      process.stdout.write(`\r${c.bold}${c.yellow}◆ Судья оценивает… ${frames[0]}${c.reset}`);
+      const spin = setInterval(() => process.stdout.write(`\r${c.bold}${c.yellow}◆ Судья оценивает… ${frames[fi++ % frames.length]}${c.reset}`), 80);
       try {
         judgeResult = await judge.evaluateThreeWay(msg, responseW, responseF, responseB, script.judgePrompt);
       } catch { /* skip */ }
