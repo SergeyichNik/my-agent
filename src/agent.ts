@@ -42,7 +42,7 @@ export class Agent {
     }
   }
 
-  setStrategy(name: StrategyName, opts?: { windowSize?: number }): void {
+  setStrategy(name: StrategyName, opts?: { windowSize?: number; sessionId?: string }): void {
     const currentHistory = this.history.slice(1); // without system message
     this.strategy = createStrategy(name, opts);
     // For branching: snapshot current history as 'main' branch
@@ -128,6 +128,9 @@ export class Agent {
     this.history.push({ role: 'user', content: userInput });
 
     const historyWithoutSystem = this.history.slice(1);
+    if (this.strategy.prepareContext) {
+      await this.strategy.prepareContext(historyWithoutSystem, this.provider);
+    }
     const promptMessages = this.strategy.buildPromptMessages(SYSTEM_PROMPT, historyWithoutSystem);
 
     let fullResponse = '';

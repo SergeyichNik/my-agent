@@ -12,7 +12,11 @@
     "bench:lmstudio":          "PROVIDER=lmstudio ts-node bench/run.ts",
     "bench:strategies":        "PROVIDER=deepseek ts-node bench/run-strategies.ts",
     "bench:strategies:gemini": "PROVIDER=gemini ts-node bench/run-strategies.ts",
-    "bench:strategies:lm":     "PROVIDER=lmstudio ts-node bench/run-strategies.ts"
+    "bench:strategies:lm":     "PROVIDER=lmstudio ts-node bench/run-strategies.ts",
+    "bench:memory":            "PROVIDER=deepseek ts-node bench/run-memory.ts",
+    "bench:memory:gemini":     "PROVIDER=gemini ts-node bench/run-memory.ts",
+    "bench:memory:lm":         "PROVIDER=lmstudio ts-node bench/run-memory.ts",
+    "watch-memory":            "npx ts-node bench/watch-memory.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

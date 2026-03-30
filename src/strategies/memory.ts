@@ -1,0 +1,222 @@
+import { LLMProvider, LTMEntry, Message, StrategyState, WorkingMemory } from '../types';
+import { config } from '../config';
+import { ContextStrategy } from './context-strategy';
+import { MemoryManager } from '../memory/manager';
+
+const EMPTY_WM: WorkingMemory = { goal: '', steps: [], constraints: [], entities: [] };
+
+// ── Prompts ───────────────────────────────────────────────────────────────────
+
+const RETRIEVAL_SYSTEM = `You are a memory retrieval system.
+Given the user's latest message and a list of long-term memory entries, return the IDs of entries relevant to answering the message.
+Respond ONLY with a valid JSON array of IDs. If nothing is relevant, return [].
+Example: ["id1", "id2"]`;
+
+function buildRetrievalRequest(userMessage: string, entries: LTMEntry[]): string {
+  const list = entries.map(e => `{"id":"${e.id}","content":${JSON.stringify(e.content)}}`).join('\n');
+  return `User message: ${JSON.stringify(userMessage)}\n\nLong-term memory entries:\n${list}\n\nReturn relevant IDs as JSON array.`;
+}
+
+const DECISION_SYSTEM = `You are a memory manager for an AI assistant.
+After each conversation turn, you:
+1. Update the working memory (current task state — session-scoped)
+2. Identify facts worth storing in long-term memory (cross-session — user preferences, stable patterns, important facts)
+
+Working memory fields:
+- goal: the main objective of the current task (empty string if none)
+- steps: list of planned or completed steps
+- constraints: requirements and limitations
+- entities: key named things (files, people, services, etc.)
+
+Long-term memory rules:
+- Store ONLY durable facts: user preferences, recurring patterns, stable decisions
+- Do NOT store: temporary context, conversational filler, things already stored
+- Keep facts concise (one sentence each)
+
+Respond ONLY with valid JSON (no other text):
+{"wm_update":{"goal":"...","steps":[...],"constraints":[...],"entities":[...]},"ltm_add":["fact1","fact2"]}`;
+
+function buildDecisionRequest(
+  currentWM: WorkingMemory,
+  existingLTM: LTMEntry[],
+  lastUser: string,
+  lastAssistant: string
+): string {
+  const ltmList = existingLTM.length
+    ? existingLTM.map(e => `- ${e.content}`).join('\n')
+    : 'None';
+  const wmStr = JSON.stringify(currentWM);
+  return `Current working memory: ${wmStr}
+
+Existing long-term memory:
+${ltmList}
+
+Last user message: ${JSON.stringify(lastUser)}
+Last assistant message: ${JSON.stringify(lastAssistant.slice(0, 1000))}
+
+Update working memory and identify new long-term facts.`;
+}
+
+// ── MemoryStrategy ────────────────────────────────────────────────────────────
+
+export class MemoryStrategy implements ContextStrategy {
+  readonly name = 'memory' as const;
+  private workingMemory: WorkingMemory = { ...EMPTY_WM };
+  private relevantEntries: LTMEntry[] = [];
+  private readonly manager: MemoryManager;
+  private readonly windowSize: number;
+  readonly sessionId: string;
+
+  constructor(sessionId: string = 'default', windowSize?: number) {
+    this.sessionId = sessionId;
+    this.windowSize = windowSize ?? config.factsWindowSize;
+    this.manager = new MemoryManager();
+  }
+
+  /** Called before buildPromptMessages — async LTM retrieval. */
+  async prepareContext(history: Message[], provider: LLMProvider): Promise<void> {
+    const allEntries = this.manager.getAll();
+    if (allEntries.length === 0) {
+      this.relevantEntries = [];
+      return;
+    }
+
+    // Find last user message
+    const lastUser = [...history].reverse().find(m => m.role === 'user');
+    if (!lastUser) {
+      this.relevantEntries = allEntries;
+      return;
+    }
+
+    // Ask LLM to retrieve relevant entries
+    try {
+      const retrievalMessages: Message[] = [
+        { role: 'system', content: RETRIEVAL_SYSTEM },
+        { role: 'user', content: buildRetrievalRequest(lastUser.content, allEntries) },
+      ];
+      let raw = '';
+      await provider.streamChat(retrievalMessages, chunk => { raw += chunk; });
+
+      const match = raw.match(/\[[\s\S]*?\]/);
+      if (!match) {
+        this.relevantEntries = allEntries;
+        return;
+      }
+      const ids = JSON.parse(match[0]) as string[];
+      const idSet = new Set(ids);
+      this.relevantEntries = allEntries.filter(e => idSet.has(e.id));
+    } catch {
+      // Fallback: inject all
+      this.relevantEntries = allEntries;
+    }
+  }
+
+  buildPromptMessages(systemPrompt: string, history: Message[]): Message[] {
+    const messages: Message[] = [];
+
+    // Build enriched system prompt
+    let systemContent = systemPrompt;
+
+    if (this.relevantEntries.length > 0) {
+      const ltmSection = this.relevantEntries.map(e => `- ${e.content}`).join('\n');
+      systemContent += `\n\n[Long-term memory — facts from previous sessions]\n${ltmSection}`;
+    }
+
+    const wm = this.workingMemory;
+    const hasWM = wm.goal || wm.steps.length || wm.constraints.length || wm.entities.length;
+    if (hasWM) {
+      const parts: string[] = [];
+      if (wm.goal)              parts.push(`Goal: ${wm.goal}`);
+      if (wm.steps.length)      parts.push(`Steps: ${wm.steps.map((s, i) => `[${i + 1}] ${s}`).join(', ')}`);
+      if (wm.constraints.length) parts.push(`Constraints: ${wm.constraints.join(', ')}`);
+      if (wm.entities.length)   parts.push(`Entities: ${wm.entities.join(', ')}`);
+      systemContent += `\n\n[Working memory — current task state]\n${parts.join('\n')}`;
+    }
+
+    messages.push({ role: 'system', content: systemContent });
+
+    // Recent messages window
+    const window = history.slice(-this.windowSize);
+    return [...messages, ...window];
+  }
+
+  async afterTurn(history: Message[], provider: LLMProvider): Promise<Message[]> {
+    const len = history.length;
+    if (len < 2) return history;
+
+    const lastUser = history[len - 2];
+    const lastAssistant = history[len - 1];
+    if (lastUser.role !== 'user' || lastAssistant.role !== 'assistant') return history;
+
+    try {
+      const decisionMessages: Message[] = [
+        { role: 'system', content: DECISION_SYSTEM },
+        {
+          role: 'user',
+          content: buildDecisionRequest(
+            this.workingMemory,
+            this.manager.getAll(),
+            lastUser.content,
+            lastAssistant.content
+          ),
+        },
+      ];
+
+      let raw = '';
+      await provider.streamChat(decisionMessages, chunk => { raw += chunk; });
+
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) {
+        const parsed = JSON.parse(match[0]) as {
+          wm_update?: Partial<WorkingMemory>;
+          ltm_add?: string[];
+        };
+
+        // Update working memory
+        if (parsed.wm_update) {
+          const u = parsed.wm_update;
+          this.workingMemory = {
+            goal:        u.goal        ?? this.workingMemory.goal,
+            steps:       u.steps       ?? this.workingMemory.steps,
+            constraints: u.constraints ?? this.workingMemory.constraints,
+            entities:    u.entities    ?? this.workingMemory.entities,
+          };
+          this.manager.saveWMState(this.workingMemory);
+        }
+
+        // Add new LTM entries
+        if (Array.isArray(parsed.ltm_add)) {
+          const existing = new Set(this.manager.getAll().map(e => e.content.toLowerCase()));
+          for (const fact of parsed.ltm_add) {
+            if (fact && !existing.has(fact.toLowerCase())) {
+              this.manager.addEntry(fact, this.sessionId);
+            }
+          }
+        }
+      }
+    } catch {
+      // Decision engine failure is non-fatal
+    }
+
+    return history;
+  }
+
+  serializeState(): StrategyState {
+    return { name: 'memory', workingMemory: this.workingMemory, windowSize: this.windowSize };
+  }
+
+  loadState(state: StrategyState): void {
+    if (state.name === 'memory') {
+      this.workingMemory = state.workingMemory;
+    }
+  }
+
+  describe(): string {
+    return `Memory — LTM (global JSON) + WM (session) + last ${this.windowSize} messages`;
+  }
+
+  /** Expose manager for bench/watch scripts. */
+  getManager(): MemoryManager {
+    return this.manager;
+  }
+}

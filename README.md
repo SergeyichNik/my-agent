@@ -135,6 +135,28 @@ Snapshot the conversation at any point and explore multiple independent directio
 - `/branch load <name>` — restore a branch (replaces current history)
 - Full history sent on every request (no compression)
 
+### Strategy 5: Memory (Layered Memory System)
+Three-layer memory architecture with cross-session persistence:
+- **Short-term**: last N messages (same as sliding window)
+- **Working memory**: current task state (goal / steps / constraints / entities), session-scoped
+- **Long-term memory**: facts that persist across sessions, stored in `memory/ltm.json`
+
+Switch: `/ctx memory`
+
+**Pipeline per turn:**
+1. LLM retrieval — selects relevant long-term facts for current message
+2. Context is built: LTM facts + working memory state + last N messages
+3. Main LLM call (streaming response)
+4. Decision engine — extracts WM updates and new LTM facts from the completed turn
+
+**2 extra LLM calls per turn** (retrieval + decision engine). Long-term memory accumulates globally across all sessions using this strategy.
+
+**Inspect memory layers live** (separate terminal):
+```bash
+npm run watch-memory
+```
+Shows real-time updates to both layers as the agent runs.
+
 **Switching strategies is lossless** — full history is preserved in memory regardless of strategy.
 
 **Check current strategy:** `/ctx`
@@ -168,7 +190,10 @@ src/
     sliding-window.ts   Sliding window — last N messages only
     sticky-facts.ts     Sticky facts — LLM-extracted key-value memory
     branching.ts        Branching — named snapshots, independent conversation branches
+    memory.ts           Memory strategy — 3-layer memory (STM/WM/LTM)
     index.ts            createStrategy() factory + re-exports
+  memory/
+    manager.ts          MemoryManager — LTM read/write, WM state persistence
   providers/
     deepseek.ts         DeepSeek implementation (OpenAI-compatible SSE, raw HTTP)
     gemini.ts           Gemini implementation (@google/generative-ai SDK)
@@ -196,6 +221,22 @@ npm run bench -- summarization   # run a specific script by name
 ```
 
 Reports saved to `bench/reports/YYYY-MM-DD-{name}.md`.
+
+### Memory benchmark (cross-session recall)
+Tests whether the Memory strategy correctly stores and retrieves facts across sessions:
+
+```bash
+npm run bench:memory                 # DeepSeek
+npm run bench:memory:gemini          # Gemini
+npm run bench:memory:lm              # LM Studio
+```
+
+Runs 3 sessions: session 1 introduces facts, sessions 2–3 test recall. Compares Memory strategy vs Sliding Window (control). Reports saved to `bench/reports/memory-bench-YYYY-MM-DD.md`.
+
+**Live memory inspector** (run in a separate terminal during the agent or bench):
+```bash
+npm run watch-memory
+```
 
 ### Three-way strategy benchmark
 Compare all three context strategies (Sliding Window vs Sticky Facts vs Branching) on the same scenario:

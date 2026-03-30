@@ -1,6 +1,6 @@
 import { LLMProvider, Message, StrategyState } from '../types';
 
-export type StrategyName = 'rolling' | 'window' | 'facts' | 'branch';
+export type StrategyName = 'rolling' | 'window' | 'facts' | 'branch' | 'memory';
 
 export interface ContextStrategy {
   readonly name: StrategyName;
@@ -11,6 +11,14 @@ export interface ContextStrategy {
    * @param history - conversation history WITHOUT the system message
    */
   buildPromptMessages(systemPrompt: string, history: Message[]): Message[];
+
+  /**
+   * Optional async preparation before buildPromptMessages.
+   * Allows strategies to do async work (e.g. LTM retrieval) before building the prompt.
+   * @param history - conversation history WITHOUT the system message
+   * @param provider - the LLM provider for side-effect calls
+   */
+  prepareContext?(history: Message[], provider: LLMProvider): Promise<void>;
 
   /**
    * Called after each completed user+assistant turn.

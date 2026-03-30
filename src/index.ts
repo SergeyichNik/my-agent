@@ -262,8 +262,12 @@ async function main() {
       } else if (sub === 'rolling') {
         agent.setStrategy('rolling');
         console.log(`${label('◆ Strategy:', c.bold + c.cyan)} ${label(agent.activeStrategyDescription, c.bold)}`);
+      } else if (sub === 'memory') {
+        agent.setStrategy('memory', { sessionId: session.id });
+        console.log(`${label('◆ Strategy:', c.bold + c.cyan)} ${label(agent.activeStrategyDescription, c.bold)}`);
+        console.log(`  ${label('Long-term memory persists across sessions. Run bench/watch-memory.ts to inspect layers.', c.dim)}`);
       } else {
-        console.log(`Unknown strategy. Use: ${label('/ctx window|facts|branch|rolling', c.bold)}`);
+        console.log(`Unknown strategy. Use: ${label('/ctx window|facts|branch|rolling|memory', c.bold)}`);
       }
       rl.setPrompt(getPrompt());
       rl.prompt();

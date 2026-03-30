@@ -20,11 +20,26 @@ export interface BranchData {
   createdAt: string; // ISO 8601
 }
 
+export interface WorkingMemory {
+  goal: string;
+  steps: string[];
+  constraints: string[];
+  entities: string[];
+}
+
+export interface LTMEntry {
+  id: string;
+  content: string;
+  addedAt: string; // ISO 8601
+  source: string;  // session id or 'bench'
+}
+
 export type StrategyState =
   | { name: 'rolling'; summary: string | null }
   | { name: 'window';  windowSize: number }
   | { name: 'facts';   facts: string | null; windowSize: number }
-  | { name: 'branch';  activeBranch: string; branches: Record<string, BranchData> };
+  | { name: 'branch';  activeBranch: string; branches: Record<string, BranchData> }
+  | { name: 'memory';  workingMemory: WorkingMemory; windowSize: number };
 
 export interface Session {
   id: string;
