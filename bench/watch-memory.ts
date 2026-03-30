@@ -115,8 +115,11 @@ function renderLTM(log: LTMEntry[], allEntries: LTMEntry[]): void {
   process.stdout.write(`${c.dim}└${'─'.repeat(boxWidth - 1)}${c.reset}\n`);
 }
 
+const EMPTY_WM: WorkingMemory = { goal: '', steps: [], constraints: [], entities: [] };
+
 function render(prevLineCount: number): number {
-  const wm = readJSON<WorkingMemory>(WM_PATH, { goal: '', steps: [], constraints: [], entities: [] });
+  const rawWM = readJSON<Partial<WorkingMemory>>(WM_PATH, {});
+  const wm: WorkingMemory = { ...EMPTY_WM, ...rawWM };
   const allEntries = readJSON<LTMEntry[]>(LTM_PATH, []);
   const log = readLTMLog(LOG_PATH);
 

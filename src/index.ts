@@ -1,5 +1,6 @@
 import * as readline from 'readline';
 import * as path from 'path';
+import * as fs from 'fs';
 import { randomUUID } from 'crypto';
 import { config } from './config';
 import { Agent } from './agent';
@@ -7,7 +8,10 @@ import { DeepSeekProvider } from './providers/deepseek';
 import { GeminiProvider } from './providers/gemini';
 import { LMStudioProvider } from './providers/lmstudio';
 import { JsonSessionStorage } from './storage/json';
+import { MemoryStrategy } from './strategies/memory';
 import { LLMProvider, Session } from './types';
+
+const MEMORY_DIR = path.join(__dirname, '../memory');
 
 const c = {
   reset:  '\x1b[0m',
@@ -159,7 +163,7 @@ async function main() {
   console.log(`\n${label('◆', c.bold + c.cyan)} ${label(session.name, c.bold)}${countStr}`);
 
   console.log('\n' + label('Agent ready.', c.bold), 'Press Enter to send. Paste multi-line code — it sends as one message.');
-  console.log(`Type ${label('/ml', c.bold)} to toggle multi-line mode. ${label('/ctx [window|facts|branch]', c.bold)} to switch context strategy. ${label('/branch save|list|load', c.bold)} for branching. Ctrl+C to exit.\n`);
+  console.log(`Type ${label('/ml', c.bold)} to toggle multi-line mode. ${label('/ctx [window|facts|branch|memory]', c.bold)} to switch strategy. ${label('/memory clear|show', c.bold)} for memory. Ctrl+C to exit.\n`);
 
   const buffer: string[] = [];
   let isProcessing = false;
@@ -310,6 +314,50 @@ async function main() {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`${label('✗', c.bold + c.red)} ${label(msg, c.red)}`);
+      }
+      rl.setPrompt(getPrompt());
+      rl.prompt();
+      return;
+    }
+
+    // ── /memory ───────────────────────────────────────────────────────────────
+    if (line.trim().startsWith('/memory')) {
+      const parts = line.trim().split(/\s+/);
+      const sub = parts[1];
+      if (sub === 'clear') {
+        try {
+          fs.mkdirSync(MEMORY_DIR, { recursive: true });
+          fs.writeFileSync(path.join(MEMORY_DIR, 'ltm.json'), '[]');
+          fs.writeFileSync(path.join(MEMORY_DIR, 'ltm-log.jsonl'), '');
+          fs.writeFileSync(path.join(MEMORY_DIR, 'wm-state.json'), '{}');
+          // Also reset in-memory state if current strategy is memory
+          if (agent.activeStrategy === 'memory') {
+            agent.setStrategy('memory', { sessionId: session.id });
+          }
+          console.log(`${label('◆ Memory cleared.', c.bold + c.green)} LTM and working memory reset.`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`${label('✗', c.bold + c.red)} ${label(msg, c.red)}`);
+        }
+      } else if (sub === 'show') {
+        try {
+          const ltm = JSON.parse(fs.readFileSync(path.join(MEMORY_DIR, 'ltm.json'), 'utf-8'));
+          const wm  = JSON.parse(fs.readFileSync(path.join(MEMORY_DIR, 'wm-state.json'), 'utf-8'));
+          console.log(`${label('LTM', c.bold + c.cyan)} (${ltm.length} entries):`);
+          if (ltm.length === 0) {
+            console.log(`  ${c.dim}(empty)${c.reset}`);
+          } else {
+            ltm.forEach((e: { content: string; addedAt: string }) =>
+              console.log(`  ${c.dim}[${new Date(e.addedAt).toLocaleTimeString()}]${c.reset} ${e.content}`)
+            );
+          }
+          console.log(`${label('WM', c.bold + c.yellow)}:`);
+          console.log(`  ${c.dim}${JSON.stringify(wm, null, 2).replace(/\n/g, '\n  ')}${c.reset}`);
+        } catch {
+          console.log(`${c.dim}No memory data yet.${c.reset}`);
+        }
+      } else {
+        console.log(`Usage: ${label('/memory clear', c.bold)} | ${label('/memory show', c.bold)}`);
       }
       rl.setPrompt(getPrompt());
       rl.prompt();
