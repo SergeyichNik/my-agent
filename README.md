@@ -38,6 +38,14 @@ npm run start:lmstudio   # LM Studio (local)
 npm start                # alias for start:deepseek
 ```
 
+**Optional: run as a specific user (enables personalization)**
+```bash
+npm start -- --user alice
+npm run start:gemini -- --user bob
+```
+
+When `--user` is set and the Memory strategy is active (`/ctx memory`), the agent builds and applies a per-user profile stored in `memory/profiles/<user>.json`. The agent detects explicit preferences you state (e.g. "answer briefly", "I use Python", "no markdown") and applies them automatically in future turns.
+
 ## Usage
 
 On startup, you'll see a session picker:
@@ -194,6 +202,8 @@ src/
     index.ts            createStrategy() factory + re-exports
   memory/
     manager.ts          MemoryManager — LTM read/write, WM state persistence
+  profile/
+    manager.ts          ProfileManager — per-user profile load/save/update
   providers/
     deepseek.ts         DeepSeek implementation (OpenAI-compatible SSE, raw HTTP)
     gemini.ts           Gemini implementation (@google/generative-ai SDK)
@@ -221,6 +231,17 @@ npm run bench -- summarization   # run a specific script by name
 ```
 
 Reports saved to `bench/reports/YYYY-MM-DD-{name}.md`.
+
+### Personalization benchmark
+Tests whether the agent adapts responses to two different user profiles (alice vs bob):
+
+```bash
+npm run bench:personalization           # DeepSeek
+npm run bench:personalization:gemini    # Gemini
+npm run bench:personalization:lm        # LM Studio
+```
+
+Phase 1 builds profiles via explicit preference statements. Phase 2 asks both users the same 3 questions. The judge scores each question on Style Match, Format Match, Tech Match, and Differentiation (all 0–10), producing a final Personalization Score. Reports saved to `bench/reports/personalization-<timestamp>.md`.
 
 ### Memory benchmark (cross-session recall)
 Tests whether the Memory strategy correctly stores and retrieves facts across sessions:

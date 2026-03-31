@@ -34,6 +34,25 @@ export interface LTMEntry {
   source: string;  // session id or 'bench'
 }
 
+export interface UserProfile {
+  userId: string;
+  updatedAt: string;
+  preferences: {
+    style: 'brief' | 'detailed' | null;
+    tone: 'formal' | 'casual' | null;
+    verbosity: 'low' | 'medium' | 'high' | null;
+  };
+  format: {
+    codeStyle: 'commented' | 'clean' | null;
+    responseStructure: 'markdown' | 'plain' | null;
+  };
+  constraints: {
+    preferredLanguage: string | null;
+    doNot: string[];
+    must: string[];
+  };
+}
+
 export type StrategyState =
   | { name: 'rolling'; summary: string | null }
   | { name: 'window';  windowSize: number }

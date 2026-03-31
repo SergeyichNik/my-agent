@@ -123,6 +123,10 @@ function pickSession(rl: readline.Interface, sessions: Session[]): Promise<Sessi
 }
 
 async function main() {
+  // Parse --user flag
+  const userFlagIdx = process.argv.indexOf('--user');
+  const userId: string | undefined = userFlagIdx !== -1 ? process.argv[userFlagIdx + 1] : undefined;
+
   let provider: LLMProvider;
   if (config.provider === 'gemini') {
     provider = new GeminiProvider(config.gemini!);
@@ -139,7 +143,7 @@ async function main() {
     ? await pickSession(rl, sessions)
     : await promptNewSession(rl);
 
-  const agent = new Agent(provider, storage, session);
+  const agent = new Agent(provider, storage, session, userId);
 
   if (session.messages.length > 0) {
     agent.loadHistory(session.messages, session.summary);
@@ -160,7 +164,8 @@ async function main() {
 
   const msgCount = session.messages.length;
   const countStr = msgCount > 0 ? ` ${label(`· ${msgCount} messages loaded`, c.dim)}` : '';
-  console.log(`\n${label('◆', c.bold + c.cyan)} ${label(session.name, c.bold)}${countStr}`);
+  const userStr = userId ? ` ${label(`· user: ${userId}`, c.yellow)}` : '';
+  console.log(`\n${label('◆', c.bold + c.cyan)} ${label(session.name, c.bold)}${countStr}${userStr}`);
 
   console.log('\n' + label('Agent ready.', c.bold), 'Press Enter to send. Paste multi-line code — it sends as one message.');
   console.log(`Type ${label('/ml', c.bold)} to toggle multi-line mode. ${label('/ctx [window|facts|branch|memory]', c.bold)} to switch strategy. ${label('/memory clear|show', c.bold)} for memory. Ctrl+C to exit.\n`);
@@ -267,7 +272,7 @@ async function main() {
         agent.setStrategy('rolling');
         console.log(`${label('◆ Strategy:', c.bold + c.cyan)} ${label(agent.activeStrategyDescription, c.bold)}`);
       } else if (sub === 'memory') {
-        agent.setStrategy('memory', { sessionId: session.id });
+        agent.setStrategy('memory', { sessionId: session.id, userId: userId });
         console.log(`${label('◆ Strategy:', c.bold + c.cyan)} ${label(agent.activeStrategyDescription, c.bold)}`);
         console.log(`  ${label('Long-term memory persists across sessions. Run bench/watch-memory.ts to inspect layers.', c.dim)}`);
       } else {

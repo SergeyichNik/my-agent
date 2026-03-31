@@ -17,11 +17,13 @@ export class Agent {
   private strategy: ContextStrategy;
   private readonly storage?: SessionStorage;
   private readonly session?: Session;
+  readonly userId: string | null;
 
-  constructor(provider: LLMProvider, storage?: SessionStorage, session?: Session) {
+  constructor(provider: LLMProvider, storage?: SessionStorage, session?: Session, userId?: string) {
     this.provider = provider;
     this.storage = storage;
     this.session = session;
+    this.userId = userId ?? null;
     this.history = [{ role: 'system', content: SYSTEM_PROMPT }];
     this.strategy = new RollingSummaryStrategy();
   }
@@ -42,9 +44,12 @@ export class Agent {
     }
   }
 
-  setStrategy(name: StrategyName, opts?: { windowSize?: number; sessionId?: string }): void {
+  setStrategy(name: StrategyName, opts?: { windowSize?: number; sessionId?: string; userId?: string }): void {
     const currentHistory = this.history.slice(1); // without system message
-    this.strategy = createStrategy(name, opts);
+    const mergedOpts = name === 'memory' && this.userId
+      ? { ...opts, userId: opts?.userId ?? this.userId }
+      : opts;
+    this.strategy = createStrategy(name, mergedOpts);
     // For branching: snapshot current history as 'main' branch
     if (name === 'branch') {
       (this.strategy as BranchingStrategy).initFromHistory(currentHistory);

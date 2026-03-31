@@ -1,7 +1,8 @@
-import { LLMProvider, LTMEntry, Message, StrategyState, WorkingMemory } from '../types';
+import { LLMProvider, LTMEntry, Message, StrategyState, UserProfile, WorkingMemory } from '../types';
 import { config } from '../config';
 import { ContextStrategy } from './context-strategy';
 import { MemoryManager } from '../memory/manager';
+import { ProfileManager } from '../profile/manager';
 
 const EMPTY_WM: WorkingMemory = { goal: '', steps: [], constraints: [], entities: [] };
 
@@ -21,6 +22,7 @@ const DECISION_SYSTEM = `You are a memory manager for an AI assistant.
 After each conversation turn, you:
 1. Update the working memory (current task state — session-scoped)
 2. Identify facts worth storing in long-term memory (cross-session — user preferences, stable patterns, important facts)
+3. Detect EXPLICIT user preferences stated in this turn and update the user profile
 
 Working memory fields:
 - goal: the main objective of the current task (empty string if none)
@@ -33,8 +35,13 @@ Long-term memory rules:
 - Do NOT store: temporary context, conversational filler, things already stored
 - Keep facts concise (one sentence each)
 
+Profile update rules:
+- ONLY update when the user EXPLICITLY states a preference (e.g., "answer briefly", "I use Python", "don't use markdown")
+- Supported fields: preferences.style (brief|detailed), preferences.tone (formal|casual), preferences.verbosity (low|medium|high), format.codeStyle (commented|clean), format.responseStructure (markdown|plain), constraints.preferredLanguage (string)
+- If no explicit preference detected, use empty object {}
+
 Respond ONLY with valid JSON (no other text):
-{"wm_update":{"goal":"...","steps":[...],"constraints":[...],"entities":[...]},"ltm_add":["fact1","fact2"]}`;
+{"wm_update":{"goal":"...","steps":[...],"constraints":[...],"entities":[...]},"ltm_add":["fact1","fact2"],"profile_update":{"preferences.style":"brief"}}`;
 
 function buildDecisionRequest(
   currentWM: WorkingMemory,
@@ -63,18 +70,27 @@ export class MemoryStrategy implements ContextStrategy {
   readonly name = 'memory' as const;
   private workingMemory: WorkingMemory = { ...EMPTY_WM };
   private relevantEntries: LTMEntry[] = [];
+  private currentProfile: UserProfile | null = null;
   private readonly manager: MemoryManager;
+  private readonly profileManager: ProfileManager;
   private readonly windowSize: number;
   readonly sessionId: string;
+  readonly userId: string | null;
 
-  constructor(sessionId: string = 'default', windowSize?: number) {
+  constructor(sessionId: string = 'default', windowSize?: number, userId?: string) {
     this.sessionId = sessionId;
     this.windowSize = windowSize ?? config.factsWindowSize;
+    this.userId = userId ?? null;
     this.manager = new MemoryManager();
+    this.profileManager = new ProfileManager();
   }
 
-  /** Called before buildPromptMessages — async LTM retrieval. */
+  /** Called before buildPromptMessages — async LTM retrieval + profile load. */
   async prepareContext(history: Message[], provider: LLMProvider): Promise<void> {
+    if (this.userId) {
+      this.currentProfile = this.profileManager.load(this.userId);
+    }
+
     const allEntries = this.manager.getAll();
     if (allEntries.length === 0) {
       this.relevantEntries = [];
@@ -116,6 +132,20 @@ export class MemoryStrategy implements ContextStrategy {
 
     // Build enriched system prompt
     let systemContent = systemPrompt;
+
+    if (this.currentProfile && this.profileManager.hasAnyPreferences(this.currentProfile)) {
+      const p = this.currentProfile;
+      const lines: string[] = [];
+      if (p.preferences.style)       lines.push(`- Response style: ${p.preferences.style}`);
+      if (p.preferences.tone)        lines.push(`- Tone: ${p.preferences.tone}`);
+      if (p.preferences.verbosity)   lines.push(`- Verbosity: ${p.preferences.verbosity}`);
+      if (p.format.codeStyle)        lines.push(`- Code style: ${p.format.codeStyle}`);
+      if (p.format.responseStructure) lines.push(`- Response format: ${p.format.responseStructure}`);
+      if (p.constraints.preferredLanguage) lines.push(`- Preferred language: ${p.constraints.preferredLanguage}`);
+      for (const rule of p.constraints.doNot) lines.push(`- Do NOT: ${rule}`);
+      for (const rule of p.constraints.must)  lines.push(`- MUST: ${rule}`);
+      systemContent += `\n\n[User profile — follow these rules strictly]\n${lines.join('\n')}`;
+    }
 
     if (this.relevantEntries.length > 0) {
       const ltmSection = this.relevantEntries.map(e => `- ${e.content}`).join('\n');
@@ -170,6 +200,7 @@ export class MemoryStrategy implements ContextStrategy {
         const parsed = JSON.parse(match[0]) as {
           wm_update?: Partial<WorkingMemory>;
           ltm_add?: string[];
+          profile_update?: Record<string, unknown>;
         };
 
         // Update working memory
@@ -192,6 +223,11 @@ export class MemoryStrategy implements ContextStrategy {
               this.manager.addEntry(fact, this.sessionId);
             }
           }
+        }
+
+        // Update user profile (explicit preferences only)
+        if (this.userId && parsed.profile_update && Object.keys(parsed.profile_update).length > 0) {
+          this.currentProfile = this.profileManager.applyUpdate(this.userId, parsed.profile_update);
         }
       }
     } catch {
