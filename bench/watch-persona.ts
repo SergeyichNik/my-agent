@@ -54,22 +54,46 @@ function formatTime(iso: string): string {
 // ── Profile rendering ─────────────────────────────────────────────────────────
 
 function profileLines(profile: UserProfile | null, userId: string): string[] {
-  if (!profile) return ['(no profile yet)'];
-  const p = profile.preferences;
-  const f = profile.format;
-  const con = profile.constraints;
   const lines: string[] = [];
 
-  if (p.style)       lines.push(`style: ${p.style}`);
-  if (p.tone)        lines.push(`tone: ${p.tone}`);
-  if (p.verbosity)   lines.push(`verbosity: ${p.verbosity}`);
-  if (f.codeStyle)   lines.push(`code: ${f.codeStyle}`);
-  if (f.responseStructure) lines.push(`format: ${f.responseStructure}`);
-  if (con.preferredLanguage) lines.push(`lang: ${con.preferredLanguage}`);
-  for (const d of con.doNot) lines.push(`✗ ${d}`);
-  for (const m of con.must)  lines.push(`✓ ${m}`);
-  if (profile.updatedAt) lines.push(`updated: ${formatTime(profile.updatedAt)}`);
-  if (lines.length === 0) lines.push('(empty — no preferences set yet)');
+  // ── Preferences ──
+  if (!profile) {
+    lines.push('(no profile yet)');
+  } else {
+    const p = profile.preferences;
+    const f = profile.format;
+    const con = profile.constraints;
+    if (p.style)             lines.push(`style: ${p.style}`);
+    if (p.tone)              lines.push(`tone: ${p.tone}`);
+    if (p.verbosity)         lines.push(`verbosity: ${p.verbosity}`);
+    if (f.codeStyle)         lines.push(`code: ${f.codeStyle}`);
+    if (f.responseStructure) lines.push(`format: ${f.responseStructure}`);
+    if (con.preferredLanguage) lines.push(`lang: ${con.preferredLanguage}`);
+    for (const d of con.doNot) lines.push(`✗ ${d}`);
+    for (const m of con.must)  lines.push(`✓ ${m}`);
+    if (lines.length === 0) lines.push('(no preferences yet)');
+    if (profile.updatedAt) lines.push(`· updated ${formatTime(profile.updatedAt)}`);
+  }
+
+  // ── Per-user LTM ──
+  const ltmEntries = readJSON<LTMEntry[]>(path.join(MEMORY_DIR, `${userId}-ltm.json`), []);
+  if (ltmEntries.length > 0) {
+    lines.push('');
+    lines.push(`── LTM (${ltmEntries.length}) ──`);
+    ltmEntries.slice(-4).forEach(e => lines.push(`+ ${e.content}`));
+  }
+
+  // ── Per-user WM ──
+  const rawWM = readJSON<Partial<WorkingMemory>>(path.join(MEMORY_DIR, `${userId}-wm-state.json`), {});
+  const wm: WorkingMemory = { ...EMPTY_WM, ...rawWM };
+  if (wm.goal || wm.steps.length || wm.constraints.length) {
+    lines.push('');
+    lines.push('── WM ──');
+    if (wm.goal) lines.push(`goal: ${wm.goal}`);
+    wm.constraints.slice(0, 2).forEach(c => lines.push(`· ${c}`));
+    if (wm.steps.length) lines.push(`steps: ${wm.steps.length}`);
+  }
+
   return lines;
 }
 
@@ -207,23 +231,15 @@ function loadProfiles(): Array<{ userId: string; profile: UserProfile | null }> 
 
 function render(prevLineCount: number): number {
   const profiles = loadProfiles();
-  const allLTM   = readJSON<LTMEntry[]>(LTM_PATH, []);
-  const rawWM    = readJSON<Partial<WorkingMemory>>(WM_PATH, {});
-  const wm: WorkingMemory = { ...EMPTY_WM, ...rawWM };
-  const log      = readLTMLog(LOG_PATH);
 
   // Capture output for line counting
   const captured: string[] = [];
   const origWrite = (process.stdout.write as Function).bind(process.stdout);
   (process.stdout as any).write = (s: string) => { captured.push(s); return true; };
 
-  const profileTitle = ' ◆ USER PROFILES ';
+  const profileTitle = ' ◆ USER PROFILES + LTM + WM ';
   process.stdout.write(`\n${c.bold}${c.magenta}${profileTitle}${c.reset}\n`);
   renderProfiles(profiles);
-  process.stdout.write('\n');
-  renderLTM(log, allLTM);
-  process.stdout.write('\n');
-  renderWM(wm);
   process.stdout.write(`\n${c.dim}Watching ${MEMORY_DIR} — Ctrl+C to stop${c.reset}\n`);
 
   (process.stdout as any).write = origWrite;
@@ -257,13 +273,18 @@ async function main() {
 
   let lastMtime: Record<string, number> = {};
   const poll = setInterval(() => {
-    // Always include fixed paths + dynamically discovered profile files
-    const dynamicPaths: string[] = [LTM_PATH, LOG_PATH, WM_PATH];
+    // Profile files + per-user LTM and WM files
+    const dynamicPaths: string[] = [];
     try {
       fs.readdirSync(PROFILES_DIR)
         .filter(f => f.endsWith('.json'))
         .forEach(f => dynamicPaths.push(path.join(PROFILES_DIR, f)));
     } catch { /* profiles dir may not exist yet */ }
+    try {
+      fs.readdirSync(MEMORY_DIR)
+        .filter(f => f.endsWith('-ltm.json') || f.endsWith('-wm-state.json'))
+        .forEach(f => dynamicPaths.push(path.join(MEMORY_DIR, f)));
+    } catch { /* memory dir may not exist yet */ }
 
     let changed = false;
     for (const f of dynamicPaths) {

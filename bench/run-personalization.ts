@@ -278,13 +278,15 @@ async function main(): Promise<void> {
   const memDir = path.join(__dirname, '../memory');
   const profilesDir = path.join(memDir, 'profiles');
 
-  // Clear previous bench profiles for reproducibility
+  // Clear previous bench data for reproducibility
   await fs.mkdir(profilesDir, { recursive: true });
   for (const userId of ['alice', 'bob']) {
-    const profilePath = path.join(profilesDir, `${userId}.json`);
-    await fs.unlink(profilePath).catch(() => {});
+    await fs.unlink(path.join(profilesDir, `${userId}.json`)).catch(() => {});
+    await fs.unlink(path.join(memDir, `${userId}-ltm.json`)).catch(() => {});
+    await fs.unlink(path.join(memDir, `${userId}-ltm-log.jsonl`)).catch(() => {});
+    await fs.unlink(path.join(memDir, `${userId}-wm-state.json`)).catch(() => {});
   }
-  console.log(`${c.dim}Cleared previous bench profiles.${c.reset}\n`);
+  console.log(`${c.dim}Cleared previous bench profiles, LTM and WM.${c.reset}\n`);
 
   const provider = createProvider();
   const profileManager = new ProfileManager(profilesDir);

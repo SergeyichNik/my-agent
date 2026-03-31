@@ -91,7 +91,7 @@ export class MemoryStrategy implements ContextStrategy {
     this.sessionId = sessionId;
     this.windowSize = windowSize ?? config.factsWindowSize;
     this.userId = userId ?? null;
-    this.manager = new MemoryManager();
+    this.manager = new MemoryManager(undefined, userId ?? undefined);
     this.profileManager = new ProfileManager();
   }
 

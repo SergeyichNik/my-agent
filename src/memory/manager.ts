@@ -11,11 +11,12 @@ export class MemoryManager {
   private readonly wmStatePath: string;
   private entries: LTMEntry[];
 
-  constructor(memoryDir: string = DEFAULT_MEMORY_DIR) {
+  constructor(memoryDir: string = DEFAULT_MEMORY_DIR, userId?: string) {
     fs.mkdirSync(memoryDir, { recursive: true });
-    this.ltmPath    = path.join(memoryDir, 'ltm.json');
-    this.logPath    = path.join(memoryDir, 'ltm-log.jsonl');
-    this.wmStatePath = path.join(memoryDir, 'wm-state.json');
+    const prefix = userId ? `${userId}-` : '';
+    this.ltmPath     = path.join(memoryDir, `${prefix}ltm.json`);
+    this.logPath     = path.join(memoryDir, `${prefix}ltm-log.jsonl`);
+    this.wmStatePath = path.join(memoryDir, `${prefix}wm-state.json`);
     this.entries = this.loadLTM();
   }
 
