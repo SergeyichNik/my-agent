@@ -297,21 +297,28 @@ async function main(): Promise<void> {
   const aliceAgent = createAgent(provider, 'alice');
   const bobAgent   = createAgent(provider, 'bob');
 
-  console.log(`${label('alice>', c.cyan)} Natural conversation (profile forms organically)...\n`);
-  for (const msg of ALICE_SETUP) {
-    process.stdout.write(`  ${c.dim}you: ${msg}${c.reset}\n`);
-    let response = '';
-    await aliceAgent.chat(msg, chunk => { response += chunk; });
-    process.stdout.write(`  ${c.dim}bot: ${response.slice(0, 120).replace(/\n/g, ' ')}…${c.reset}\n\n`);
-  }
+  const setupRenderer = new MultiColumnRenderer(['alice', 'bob'], [c.cyan, c.yellow]);
 
-  console.log(`${label('bob>', c.yellow)} Natural conversation (profile forms organically)...\n`);
-  for (const msg of BOB_SETUP) {
-    process.stdout.write(`  ${c.dim}you: ${msg}${c.reset}\n`);
-    let response = '';
-    await bobAgent.chat(msg, chunk => { response += chunk; });
-    process.stdout.write(`  ${c.dim}bot: ${response.slice(0, 120).replace(/\n/g, ' ')}…${c.reset}\n\n`);
-  }
+  await Promise.all([
+    (async () => {
+      for (const msg of ALICE_SETUP) {
+        setupRenderer.append(0, `${c.dim}you: ${msg}${c.reset}\n`);
+        await aliceAgent.chat(msg, chunk => setupRenderer.append(0, chunk));
+        setupRenderer.append(0, '\n\n');
+      }
+      setupRenderer.markDone(0);
+    })(),
+    (async () => {
+      for (const msg of BOB_SETUP) {
+        setupRenderer.append(1, `${c.dim}you: ${msg}${c.reset}\n`);
+        await bobAgent.chat(msg, chunk => setupRenderer.append(1, chunk));
+        setupRenderer.append(1, '\n\n');
+      }
+      setupRenderer.markDone(1);
+    })(),
+  ]);
+
+  setupRenderer.clear();
 
   const aliceProfile = profileManager.load('alice');
   const bobProfile   = profileManager.load('bob');
