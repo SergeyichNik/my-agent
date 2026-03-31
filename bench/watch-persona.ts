@@ -73,38 +73,46 @@ function profileLines(profile: UserProfile | null, userId: string): string[] {
   return lines;
 }
 
-function renderProfiles(aliceProfile: UserProfile | null, bobProfile: UserProfile | null): number {
+const PROFILE_COLORS = [c.cyan, c.yellow, c.green, c.magenta, c.red];
+
+function renderProfiles(profiles: Array<{ userId: string; profile: UserProfile | null }>): number {
+  if (profiles.length === 0) {
+    process.stdout.write(`${c.dim}  (no profiles yet — start a session with --user <name>)${c.reset}\n`);
+    return 1;
+  }
+
   const termWidth = process.stdout.columns || 120;
-  const colWidth = Math.max(20, Math.floor((termWidth - 3) / 2));
+  const n = profiles.length;
+  const colWidth = Math.max(20, Math.floor((termWidth - n - 1) / n));
   const inner = colWidth - 2;
 
   const lines: string[] = [];
 
-  // Header row
-  const aliceHeader = ` alice `;
-  const bobHeader = ` bob `;
-  const aTrail = Math.max(0, colWidth - aliceHeader.length - 1);
-  const bTrail = Math.max(0, colWidth - bobHeader.length - 1);
-  lines.push(
-    `┌${c.bold}${c.cyan}${aliceHeader}${c.reset}${c.dim}${'─'.repeat(aTrail)}${c.reset}` +
-    `┬${c.bold}${c.yellow}${bobHeader}${c.reset}${c.dim}${'─'.repeat(bTrail)}${c.reset}┐`
-  );
+  // Top border with user names
+  const topParts = profiles.map(({ userId }, i) => {
+    const col = PROFILE_COLORS[i % PROFILE_COLORS.length];
+    const header = ` ${userId} `;
+    const trail = Math.max(0, colWidth - header.length - 1);
+    return `${c.bold}${col}${header}${c.reset}${c.dim}${'─'.repeat(trail)}${c.reset}`;
+  });
+  lines.push(`┌${topParts.join('┬')}┐`);
 
-  const aliceLines = profileLines(aliceProfile, 'alice');
-  const bobLines   = profileLines(bobProfile, 'bob');
-  const maxRows = Math.max(aliceLines.length, bobLines.length);
+  // Content rows
+  const cols = profiles.map(({ userId, profile }) => profileLines(profile, userId));
+  const maxRows = Math.max(...cols.map(c => c.length));
 
-  for (let i = 0; i < maxRows; i++) {
-    const aText = (aliceLines[i] ?? '').slice(0, inner);
-    const bText = (bobLines[i] ?? '').slice(0, inner);
-    lines.push(
-      `${c.dim}│${c.reset} ${c.cyan}${aText.padEnd(inner)}${c.reset}` +
-      `${c.dim}│${c.reset} ${c.yellow}${bText.padEnd(inner)}${c.reset}${c.dim}│${c.reset}`
-    );
+  for (let row = 0; row < maxRows; row++) {
+    const cells = cols.map((col, i) => {
+      const color = PROFILE_COLORS[i % PROFILE_COLORS.length];
+      const text = (col[row] ?? '').slice(0, inner);
+      return `${c.dim}│${c.reset} ${color}${text.padEnd(inner)}${c.reset}`;
+    });
+    lines.push(`${cells.join('')}${c.dim}│${c.reset}`);
   }
 
-  const divLen = colWidth * 2 + 3;
-  lines.push(`${c.dim}└${'─'.repeat(colWidth)}┴${'─'.repeat(colWidth)}┘${c.reset}`);
+  // Bottom border
+  const botParts = Array(n).fill('─'.repeat(colWidth));
+  lines.push(`${c.dim}└${botParts.join('┴')}┘${c.reset}`);
 
   for (const line of lines) process.stdout.write(line + '\n');
   return lines.length;
@@ -184,13 +192,25 @@ function renderWM(wm: WorkingMemory): number {
 
 // ── Full render ───────────────────────────────────────────────────────────────
 
+function loadProfiles(): Array<{ userId: string; profile: UserProfile | null }> {
+  try {
+    const files = fs.readdirSync(PROFILES_DIR).filter(f => f.endsWith('.json'));
+    return files.map(f => {
+      const userId = path.basename(f, '.json');
+      const profile = readJSON<UserProfile | null>(path.join(PROFILES_DIR, f), null);
+      return { userId, profile };
+    });
+  } catch {
+    return [];
+  }
+}
+
 function render(prevLineCount: number): number {
-  const aliceProfile = readJSON<UserProfile | null>(path.join(PROFILES_DIR, 'alice.json'), null);
-  const bobProfile   = readJSON<UserProfile | null>(path.join(PROFILES_DIR, 'bob.json'), null);
-  const allLTM       = readJSON<LTMEntry[]>(LTM_PATH, []);
-  const rawWM        = readJSON<Partial<WorkingMemory>>(WM_PATH, {});
+  const profiles = loadProfiles();
+  const allLTM   = readJSON<LTMEntry[]>(LTM_PATH, []);
+  const rawWM    = readJSON<Partial<WorkingMemory>>(WM_PATH, {});
   const wm: WorkingMemory = { ...EMPTY_WM, ...rawWM };
-  const log          = readLTMLog(LOG_PATH);
+  const log      = readLTMLog(LOG_PATH);
 
   // Capture output for line counting
   const captured: string[] = [];
@@ -199,7 +219,7 @@ function render(prevLineCount: number): number {
 
   const profileTitle = ' ◆ USER PROFILES ';
   process.stdout.write(`\n${c.bold}${c.magenta}${profileTitle}${c.reset}\n`);
-  renderProfiles(aliceProfile, bobProfile);
+  renderProfiles(profiles);
   process.stdout.write('\n');
   renderLTM(log, allLTM);
   process.stdout.write('\n');
@@ -230,23 +250,23 @@ async function main() {
   fs.mkdirSync(MEMORY_DIR, { recursive: true });
   fs.mkdirSync(PROFILES_DIR, { recursive: true });
 
-  console.log(`${c.bold}${c.cyan}Persona Inspector${c.reset} — watching alice & bob profiles + LTM + WM\n`);
+  console.log(`${c.bold}${c.cyan}Persona Inspector${c.reset} — watching ${PROFILES_DIR} + LTM + WM\n`);
 
   let prevLineCount = 0;
   prevLineCount = render(0);
 
-  const watchPaths = [
-    path.join(PROFILES_DIR, 'alice.json'),
-    path.join(PROFILES_DIR, 'bob.json'),
-    LTM_PATH,
-    LOG_PATH,
-    WM_PATH,
-  ];
-
   let lastMtime: Record<string, number> = {};
   const poll = setInterval(() => {
+    // Always include fixed paths + dynamically discovered profile files
+    const dynamicPaths: string[] = [LTM_PATH, LOG_PATH, WM_PATH];
+    try {
+      fs.readdirSync(PROFILES_DIR)
+        .filter(f => f.endsWith('.json'))
+        .forEach(f => dynamicPaths.push(path.join(PROFILES_DIR, f)));
+    } catch { /* profiles dir may not exist yet */ }
+
     let changed = false;
-    for (const f of watchPaths) {
+    for (const f of dynamicPaths) {
       try {
         const stat = fs.statSync(f);
         const prev = lastMtime[f] ?? 0;
