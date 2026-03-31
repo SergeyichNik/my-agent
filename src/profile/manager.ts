@@ -28,7 +28,10 @@ export class ProfileManager {
       const raw = fs.readFileSync(filePath, 'utf-8');
       return JSON.parse(raw) as UserProfile;
     } catch {
-      return emptyProfile(userId);
+      // File doesn't exist — create it immediately so the user is "registered"
+      const profile = emptyProfile(userId);
+      fs.writeFileSync(filePath, JSON.stringify(profile, null, 2));
+      return profile;
     }
   }
 
