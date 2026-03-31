@@ -60,34 +60,41 @@ function startSpinner(msg: string): () => void {
 
 // ── Scenario ──────────────────────────────────────────────────────────────────
 
-// Alice: Python data scientist, wants code-only answers, no explanations.
-// Bob: JS student, wants detailed explanations with step-by-step examples and comments.
+// Alice: дата-аналитик на Python, хочет только код без объяснений.
+// Bob: студент, учит JavaScript, хочет подробные объяснения с примерами.
+// ~5 messages each → Phase 1 ≈ 2 min parallel; 4 questions → Phase 2 ≈ 3 min → total ≈ 5 min.
 const ALICE_SETUP = [
-  'I work with Python for data analysis. how do I read a CSV file with pandas?',
-  'cool, just the code next time — skip the explanation please',
-  'how do I group by a column and get the mean in a pandas dataframe?',
-  'perfect, keep it like that — just the snippet, no comments needed',
+  'Я работаю с Python для анализа данных. Как читать CSV с помощью pandas?',
+  'Окей, в следующий раз давай только код — без объяснений, пожалуйста',
+  'Как сгруппировать данные по столбцу и посчитать среднее в pandas?',
+  'Хорошо, именно так и держи — только сниппет, без комментариев',
+  'Как отфильтровать строки в dataframe по условию на значение столбца?',
 ];
 
 const BOB_SETUP = [
-  "I'm learning JavaScript and confused about how arrays work. can you explain?",
-  'that helped! can you show me a full example with comments explaining each line?',
-  'what is the map() function? I learn best from step-by-step walkthroughs',
-  'awesome, I really need those detailed explanations — it helps me understand the why',
+  'Я учу JavaScript и не понимаю как работают массивы. Можешь объяснить?',
+  'Помогло! Можешь показать полный пример с комментариями к каждой строке?',
+  'Что такое функция map()? Я лучше понимаю когда есть пошаговый разбор',
+  'Отлично, именно такие подробные объяснения мне нужны — это помогает понять суть',
+  'Как работает цикл forEach? Объясни с примером и аналогией из реальной жизни',
 ];
 
 const TEST_QUESTIONS = [
   {
-    question: 'How do I filter items from a collection based on a condition?',
-    criterion: 'язык (Python vs JS), стиль (только код vs подробное объяснение с комментариями)',
+    question: 'Как отфильтровать элементы коллекции по условию?',
+    criterion: 'язык (Python vs JavaScript), стиль (только код без слов vs объяснение + комментарии)',
   },
   {
-    question: 'How do I make an HTTP request and get the response body?',
-    criterion: 'краткость (Alice — только код) vs детальность (Bob — шаги + объяснение)',
+    question: 'Как сделать HTTP запрос и получить тело ответа?',
+    criterion: 'краткость Alice (только код) vs детальность Bob (шаги + пояснения)',
   },
   {
-    question: 'Write a function that finds the maximum value in a list.',
-    criterion: 'язык (Python vs JS), комментарии (нет vs есть), объяснение (нет vs пошаговое)',
+    question: 'Напиши функцию, которая находит максимальный элемент в списке',
+    criterion: 'язык (Python vs JavaScript), комментарии (нет vs есть), объяснение (нет vs пошаговое)',
+  },
+  {
+    question: 'Как обработать ошибки при выполнении кода?',
+    criterion: 'язык (Python try/except vs JS try/catch), стиль (сниппет vs развёрнутое объяснение с примерами)',
   },
 ];
 
