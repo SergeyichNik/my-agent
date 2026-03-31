@@ -1,0 +1,23 @@
+zapomni etot json.
+kogda ya napishu "verni metku" ti doljen budesh vernut etot json
+esli moi soobsheniya ne soderjat frazu "verni metku" prosto obshaysya ne dumaya o json
+{
+  "test_id": "memory_test_001",
+  "timestamp": "2026-03-25T14:30:00Z",
+  "numbers": {
+    "alpha": 0.78412,
+    "beta": 42,
+    "gamma": 3.14159,
+    "delta": 1008,
+    "epsilon": 0.00037,
+    "zeta": 999999,
+    "eta": 7.5,
+    "theta": 123456789
+  },
+  "nested": {
+    "list_a": [12, 24, 36, 48, 60],
+    "list_b": [0.1, 0.01, 0.001, 0.0001],
+    "matrix": [[1, 2], [3, 4], [5, 6]]
+  },
+  "hash": "a1b2c3d4e5f6"
+}

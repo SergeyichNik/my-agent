@@ -64,19 +64,19 @@ function startSpinner(msg: string): () => void {
 // Bob: студент, учит JavaScript, хочет подробные объяснения с примерами.
 // ~5 messages each → Phase 1 ≈ 2 min parallel; 4 questions → Phase 2 ≈ 3 min → total ≈ 5 min.
 const ALICE_SETUP = [
-  'Я работаю с Python для анализа данных. Как читать CSV с помощью pandas?',
+  'Я дата-аналитик, работаю только на Python. Как читать CSV с помощью pandas?',
   'Окей, в следующий раз давай только код — без объяснений, пожалуйста',
   'Как сгруппировать данные по столбцу и посчитать среднее в pandas?',
   'Хорошо, именно так и держи — только сниппет, без комментариев',
-  'Как отфильтровать строки в dataframe по условию на значение столбца?',
+  'Как отфильтровать строки в dataframe по условию на значение столбца? Я использую только Python.',
 ];
 
 const BOB_SETUP = [
-  'Я учу JavaScript и не понимаю как работают массивы. Можешь объяснить?',
+  'Я учу JavaScript с нуля и не понимаю как работают массивы. Можешь объяснить?',
   'Помогло! Можешь показать полный пример с комментариями к каждой строке?',
-  'Что такое функция map()? Я лучше понимаю когда есть пошаговый разбор',
+  'Что такое функция map() в JavaScript? Я лучше понимаю когда есть пошаговый разбор',
   'Отлично, именно такие подробные объяснения мне нужны — это помогает понять суть',
-  'Как работает цикл forEach? Объясни с примером и аналогией из реальной жизни',
+  'Как работает цикл forEach в JavaScript? Объясни с примером и аналогией из реальной жизни',
 ];
 
 const TEST_QUESTIONS = [
@@ -116,27 +116,41 @@ interface QuestionResult {
   scores: PersonalizationScores | null;
 }
 
-const PERSONALIZATION_JUDGE_SYSTEM = `Ты судья, оцениваешь персонализацию ИИ-ассистента.
+const PERSONALIZATION_JUDGE_SYSTEM = `Ты строгий судья, оцениваешь персонализацию ИИ-ассистента.
 Два разных пользователя задали один и тот же вопрос. У каждого свой профиль.
 
 Профиль Alice:
-- Язык программирования: Python
-- Стиль: только код, без объяснений и без комментариев
-- Формат: минимальный — никаких вводных слов, сразу код
+- Язык программирования: Python (и ТОЛЬКО Python — никакой другой язык недопустим)
+- Стиль: ТОЛЬКО код, без объяснений, без вводных предложений, без комментариев в коде
+- Формат: минимальный — никаких заголовков, никаких буллетов, сразу code block
 
 Профиль Bob:
-- Язык программирования: JavaScript
-- Стиль: подробный, пошаговые объяснения, аналогии
-- Формат: код с комментариями к каждой строке, развёрнутый текст
+- Язык программирования: JavaScript (и только JavaScript)
+- Стиль: подробный, пошаговые объяснения с аналогиями из реальной жизни
+- Формат: код с комментарием к каждой строке, развёрнутый текст до и после кода
 
-Оцени по четырём критериям от 1 до 10:
-- styleMatch: краткость Alice (код без слов) и детальность Bob (объяснения + аналогии) — насколько соблюдены
-- formatMatch: Alice — код без комментариев; Bob — код с комментариями и текст вокруг
-- techMatch: Alice использует Python, Bob использует JavaScript
-- differentiation: насколько ответы вообще отличаются друг от друга (0 = идентичны, 10 = максимально разные)
+ВАЖНО — перед оценкой выполни следующие проверки:
+1. Определи точный язык программирования в code block ответа Alice (Python? Kotlin? JavaScript? другое?)
+2. Определи точный язык программирования в code block ответа Bob
+3. Проверь: есть ли в ответе Alice хоть одно предложение-объяснение (не считая самого кода)?
+4. Проверь: есть ли в ответе Bob комментарии к строкам кода?
+
+Оценочная шкала: 10 = идеально соответствует, 8-9 = незначительное отклонение, 5-7 = частичное соответствие, 0-4 = не соответствует профилю.
+
+Критерии оценки:
+- styleMatch: Alice — только код без единого слова объяснения; Bob — подробный текст с объяснениями.
+  * Если Alice даёт объяснения (предложения, буллеты, вводный текст) → max 3/10
+  * Если Bob не объясняет → max 4/10
+- formatMatch: Alice — код без inline-комментариев; Bob — комментарий на каждую строку.
+  * Если Alice даёт код с комментариями → max 4/10
+  * Если Bob даёт код без комментариев → max 4/10
+- techMatch: Alice использует Python, Bob использует JavaScript.
+  * Если Alice отвечает НЕ на Python (Kotlin, Java, JS и т.д.) → max 2/10
+  * Если Bob отвечает НЕ на JavaScript → max 2/10
+- differentiation: насколько ответы отличаются по объёму, языку и стилю (0 = идентичны, 10 = максимально разные)
 
 Отвечай ТОЛЬКО валидным JSON без какого-либо другого текста:
-{"styleMatch":N,"formatMatch":N,"techMatch":N,"differentiation":N,"conclusion":"одно предложение на русском"}`;
+{"styleMatch":N,"formatMatch":N,"techMatch":N,"differentiation":N,"conclusion":"одно предложение на русском с указанием языков которые реально использованы"}`;
 
 async function judgePersonalization(
   provider: LLMProvider,
@@ -348,6 +362,20 @@ async function main(): Promise<void> {
   console.log(`\n${label('◆ Profiles built:', c.bold + c.green)}`);
   console.log(`  alice: ${JSON.stringify(aliceProfile.preferences)} | lang: ${aliceProfile.constraints.preferredLanguage}`);
   console.log(`  bob:   ${JSON.stringify(bobProfile.preferences)} | lang: ${bobProfile.constraints.preferredLanguage}`);
+
+  // Validate profile completeness — warn if key signals were missed
+  const profileIssues: string[] = [];
+  if (!aliceProfile.constraints.preferredLanguage) profileIssues.push('alice: preferredLanguage not set (expected "Python")');
+  if (aliceProfile.preferences.verbosity !== 'low') profileIssues.push(`alice: verbosity = ${aliceProfile.preferences.verbosity} (expected "low")`);
+  if (!bobProfile.constraints.preferredLanguage) profileIssues.push('bob: preferredLanguage not set (expected "JavaScript")');
+  if (bobProfile.format.codeStyle !== 'commented') profileIssues.push(`bob: codeStyle = ${bobProfile.format.codeStyle} (expected "commented")`);
+  if (profileIssues.length > 0) {
+    console.log(`\n${label('⚠ Profile warnings — some preferences were not captured:', c.bold + c.yellow)}`);
+    for (const issue of profileIssues) console.log(`  ${c.yellow}•${c.reset} ${issue}`);
+    console.log(`${c.dim}  LTM may still carry the facts — responses may still be partially personalized.${c.reset}`);
+  } else {
+    console.log(`  ${c.green}✓ All key profile fields captured correctly${c.reset}`);
+  }
 
   // ── Phase 2: Test questions ────────────────────────────────────────────────
 

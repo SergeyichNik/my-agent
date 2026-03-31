@@ -44,7 +44,9 @@ Profile update rules:
   * "just the code" / "no explanation needed" → preferences.verbosity: low
   * "with comments please" / "explain each step" → format.codeStyle: commented
   * "no need for comments" / "clean version" → format.codeStyle: clean
-  * User asking a question using a specific language ("how do I do X in Python/TypeScript/Go") → constraints.preferredLanguage (only if consistent across messages, not a one-off)
+  * "I use/work with [Language]" / "I'm learning [Language]" / "I always use [Language]" / "[Language] only" → constraints.preferredLanguage
+  * User states their primary language explicitly (e.g. "I'm a Python developer", "working in TypeScript") → constraints.preferredLanguage
+  * LTM already contains "User works with [Language]" + current message also references that language → confirm constraints.preferredLanguage
   * "plain text" / "no markdown" / "no formatting" → format.responseStructure: plain
 - Do NOT infer preferences from silence or neutral messages — only update on a clear signal
 - Supported fields: preferences.style (brief|detailed), preferences.tone (formal|casual), preferences.verbosity (low|medium|high), format.codeStyle (commented|clean), format.responseStructure (markdown|plain), constraints.preferredLanguage (string)
@@ -146,14 +148,47 @@ export class MemoryStrategy implements ContextStrategy {
     if (this.currentProfile && this.profileManager.hasAnyPreferences(this.currentProfile)) {
       const p = this.currentProfile;
       const lines: string[] = [];
-      if (p.preferences.style)       lines.push(`- Response style: ${p.preferences.style}`);
-      if (p.preferences.tone)        lines.push(`- Tone: ${p.preferences.tone}`);
-      if (p.preferences.verbosity)   lines.push(`- Verbosity: ${p.preferences.verbosity}`);
-      if (p.format.codeStyle)        lines.push(`- Code style: ${p.format.codeStyle}`);
-      if (p.format.responseStructure) lines.push(`- Response format: ${p.format.responseStructure}`);
-      if (p.constraints.preferredLanguage) lines.push(`- Preferred language: ${p.constraints.preferredLanguage}`);
+
+      // Map profile fields to explicit, actionable instructions
+      if (p.preferences.verbosity === 'low') {
+        lines.push('- Do NOT include any explanations, introductory text, or commentary — respond with code snippets only');
+      } else if (p.preferences.verbosity === 'medium') {
+        lines.push('- Keep responses concise — minimal explanations, focus on code');
+      } else if (p.preferences.verbosity === 'high') {
+        lines.push('- Provide detailed explanations, step-by-step breakdowns, and analogies');
+      }
+
+      if (p.preferences.style === 'brief') {
+        lines.push('- Be maximally concise — no preamble, no summary, just the answer');
+      } else if (p.preferences.style === 'detailed') {
+        lines.push('- Explain thoroughly — provide context, reasoning, and multiple examples');
+      }
+
+      if (p.preferences.tone === 'formal') {
+        lines.push('- Use formal, professional tone');
+      } else if (p.preferences.tone === 'casual') {
+        lines.push('- Use casual, friendly tone');
+      }
+
+      if (p.format.codeStyle === 'clean') {
+        lines.push('- Write code without any inline comments');
+      } else if (p.format.codeStyle === 'commented') {
+        lines.push('- Add a comment to every meaningful line of code');
+      }
+
+      if (p.format.responseStructure === 'plain') {
+        lines.push('- Use plain text only — no markdown headers, no bullet lists, no formatting');
+      } else if (p.format.responseStructure === 'markdown') {
+        lines.push('- Use markdown formatting with headers and bullets');
+      }
+
+      if (p.constraints.preferredLanguage) {
+        lines.push(`- Always respond using ${p.constraints.preferredLanguage}. Never switch to another programming language.`);
+      }
+
       for (const rule of p.constraints.doNot) lines.push(`- Do NOT: ${rule}`);
       for (const rule of p.constraints.must)  lines.push(`- MUST: ${rule}`);
+
       systemContent += `\n\n[User profile — follow these rules strictly]\n${lines.join('\n')}`;
     }
 
