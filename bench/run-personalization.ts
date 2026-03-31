@@ -60,34 +60,34 @@ function startSpinner(msg: string): () => void {
 
 // ── Scenario ──────────────────────────────────────────────────────────────────
 
-// Realistic conversations — preferences emerge naturally, not from explicit setup commands.
-// Alice is a TypeScript developer who prefers brevity; Bob is a Python developer who wants depth.
+// Alice: Python data scientist, wants code-only answers, no explanations.
+// Bob: JS student, wants detailed explanations with step-by-step examples and comments.
 const ALICE_SETUP = [
-  'how do I debounce a function call in TypeScript?',
-  'ok cool, can you show just the implementation without all the explanation?',
-  "I'm building a small CLI tool in TypeScript, what's the simplest way to parse args?",
-  'just the code is fine, no need for comments',
+  'I work with Python for data analysis. how do I read a CSV file with pandas?',
+  'cool, just the code next time — skip the explanation please',
+  'how do I group by a column and get the mean in a pandas dataframe?',
+  'perfect, keep it like that — just the snippet, no comments needed',
 ];
 
 const BOB_SETUP = [
-  "what's the difference between asyncio and threading in Python?",
-  'interesting, can you go deeper on the GIL and why it matters for IO-bound tasks?',
-  'can you show me a complete Python example with comments explaining each part?',
-  'I want to make sure I understand — can you elaborate on when to use one vs the other?',
+  "I'm learning JavaScript and confused about how arrays work. can you explain?",
+  'that helped! can you show me a full example with comments explaining each line?',
+  'what is the map() function? I learn best from step-by-step walkthroughs',
+  'awesome, I really need those detailed explanations — it helps me understand the why',
 ];
 
 const TEST_QUESTIONS = [
   {
-    question: 'How do I make an HTTP request?',
-    criterion: 'стиль ответа (краткость/детальность) и используемый язык программирования',
+    question: 'How do I filter items from a collection based on a condition?',
+    criterion: 'язык (Python vs JS), стиль (только код vs подробное объяснение с комментариями)',
   },
   {
-    question: 'Explain async/await to me.',
-    criterion: 'verbosity — Alice должна получить краткое объяснение, Bob — подробное с примерами',
+    question: 'How do I make an HTTP request and get the response body?',
+    criterion: 'краткость (Alice — только код) vs детальность (Bob — шаги + объяснение)',
   },
   {
-    question: 'Write me a function to sort an array of numbers.',
-    criterion: 'язык (TypeScript vs Python) и стиль кода (с комментариями vs без)',
+    question: 'Write a function that finds the maximum value in a list.',
+    criterion: 'язык (Python vs JS), комментарии (нет vs есть), объяснение (нет vs пошаговое)',
   },
 ];
 
@@ -113,20 +113,20 @@ const PERSONALIZATION_JUDGE_SYSTEM = `Ты судья, оцениваешь пе
 Два разных пользователя задали один и тот же вопрос. У каждого свой профиль.
 
 Профиль Alice:
-- Стиль: краткий, без лишних объяснений
-- Формат: plain text (без markdown)
-- Язык программирования: TypeScript
+- Язык программирования: Python
+- Стиль: только код, без объяснений и без комментариев
+- Формат: минимальный — никаких вводных слов, сразу код
 
 Профиль Bob:
-- Стиль: подробный, с примерами
-- Формат: код с комментариями, markdown
-- Язык программирования: Python
+- Язык программирования: JavaScript
+- Стиль: подробный, пошаговые объяснения, аналогии
+- Формат: код с комментариями к каждой строке, развёрнутый текст
 
 Оцени по четырём критериям от 1 до 10:
-- styleMatch: насколько тон и краткость/детальность ответов соответствует профилям (единая оценка за обоих)
-- formatMatch: правильный ли формат у каждого пользователя (единая оценка за обоих)
-- techMatch: использованы ли правильные языки/технологии для каждого (единая оценка за обоих)
-- differentiation: насколько ответы Alice и Bob отличаются друг от друга (0 = идентичны, 10 = максимально разные)
+- styleMatch: краткость Alice (код без слов) и детальность Bob (объяснения + аналогии) — насколько соблюдены
+- formatMatch: Alice — код без комментариев; Bob — код с комментариями и текст вокруг
+- techMatch: Alice использует Python, Bob использует JavaScript
+- differentiation: насколько ответы вообще отличаются друг от друга (0 = идентичны, 10 = максимально разные)
 
 Отвечай ТОЛЬКО валидным JSON без какого-либо другого текста:
 {"styleMatch":N,"formatMatch":N,"techMatch":N,"differentiation":N,"conclusion":"одно предложение на русском"}`;
@@ -241,8 +241,8 @@ function buildReport(results: QuestionResult[], aliceProfile: UserProfile, bobPr
   let md = `# Personalization Bench — ${date}\n\n`;
   md += `> Tests whether the agent adapts responses to different user profiles.\n\n`;
   md += `## Profiles\n\n`;
-  md += `**Alice:** brief, TypeScript, plain text\n`;
-  md += `**Bob:** detailed, Python, code with comments\n\n`;
+  md += `**Alice:** Python, code-only, no explanations, no comments\n`;
+  md += `**Bob:** JavaScript, detailed step-by-step, code with comments\n\n`;
 
   const scored = results.filter(r => r.scores !== null);
   if (scored.length > 0) {
