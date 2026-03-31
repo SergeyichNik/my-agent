@@ -20,6 +20,7 @@
     "bench:personalization:gemini":  "PROVIDER=gemini ts-node bench/run-personalization.ts",
     "bench:personalization:lm":      "PROVIDER=lmstudio ts-node bench/run-personalization.ts",
     "watch-memory":            "npx ts-node bench/watch-memory.ts",
+    "watch-persona":           "npx ts-node bench/watch-persona.ts",
     "memory:clear":            "node -e \"const fs=require('fs');fs.writeFileSync('memory/ltm.json','[]');fs.writeFileSync('memory/ltm-log.jsonl','');fs.writeFileSync('memory/wm-state.json','{}');console.log('LTM cleared.')\""
   },
   "dependencies": {

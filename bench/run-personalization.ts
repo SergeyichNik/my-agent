@@ -20,7 +20,8 @@ import { DeepSeekProvider } from '../src/providers/deepseek';
 import { GeminiProvider } from '../src/providers/gemini';
 import { LMStudioProvider } from '../src/providers/lmstudio';
 import { ProfileManager } from '../src/profile/manager';
-import { LLMProvider, UserProfile } from '../src/types';
+import { LLMProvider, UsageData, UserProfile } from '../src/types';
+import { MultiColumnRenderer } from './renderer';
 
 // ── Colors ────────────────────────────────────────────────────────────────────
 
@@ -319,6 +320,7 @@ async function main(): Promise<void> {
 
   printSeparator();
   console.log(`${label('Phase 2', c.bold + c.magenta)}: Testing with identical questions\n`);
+  console.log(`${c.dim}Tip: run ${c.reset}${c.bold}npm run watch-persona${c.reset}${c.dim} in a separate terminal to watch profiles live${c.reset}\n`);
 
   // Fresh session 2 agents — LTM/profile persists, history cleared
   const aliceAgent2 = createAgent(provider, 'alice');
@@ -331,22 +333,34 @@ async function main(): Promise<void> {
     printSeparator();
     console.log(`${label(`Q${i + 1}/${TEST_QUESTIONS.length}`, c.bold + c.dim)}: ${label(question, c.bold)}\n`);
 
-    let aliceResponse = '';
-    let bobResponse = '';
+    const renderer = new MultiColumnRenderer(['alice', 'bob'], [c.cyan, c.yellow]);
+    const turnResult = {
+      alice: '',
+      bob: '',
+      aliceUsage: null as UsageData | null,
+      bobUsage: null as UsageData | null,
+    };
 
-    process.stdout.write(`${label('alice:', c.cyan)} `);
-    await aliceAgent2.chat(question, chunk => {
-      aliceResponse += chunk;
-      process.stdout.write(chunk);
-    });
-    process.stdout.write('\n\n');
+    await Promise.all([
+      (async () => {
+        turnResult.aliceUsage = await aliceAgent2.chat(question, chunk => {
+          turnResult.alice += chunk;
+          renderer.append(0, chunk);
+        });
+        renderer.markDone(0, turnResult.aliceUsage?.completion_tokens ?? undefined);
+      })(),
+      (async () => {
+        turnResult.bobUsage = await bobAgent2.chat(question, chunk => {
+          turnResult.bob += chunk;
+          renderer.append(1, chunk);
+        });
+        renderer.markDone(1, turnResult.bobUsage?.completion_tokens ?? undefined);
+      })(),
+    ]);
 
-    process.stdout.write(`${label('bob:', c.yellow)} `);
-    await bobAgent2.chat(question, chunk => {
-      bobResponse += chunk;
-      process.stdout.write(chunk);
-    });
-    process.stdout.write('\n\n');
+    renderer.clear();
+    const aliceResponse = turnResult.alice;
+    const bobResponse   = turnResult.bob;
 
     // Judge
     process.stdout.write(`${c.bold}${c.yellow}◆ Судья оценивает…${c.reset}\n`);
