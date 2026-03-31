@@ -47,16 +47,20 @@ function printSeparator(): void {
 
 // ── Scenario ──────────────────────────────────────────────────────────────────
 
+// Realistic conversations — preferences emerge naturally, not from explicit setup commands.
+// Alice is a TypeScript developer who prefers brevity; Bob is a Python developer who wants depth.
 const ALICE_SETUP = [
-  'My name is Alice. Please always answer briefly and without unnecessary explanations.',
-  'I only write TypeScript. Never suggest JavaScript alternatives.',
-  'Do not use markdown formatting in your answers — plain text only.',
+  'how do I debounce a function call in TypeScript?',
+  'ok cool, can you show just the implementation without all the explanation?',
+  "I'm building a small CLI tool in TypeScript, what's the simplest way to parse args?",
+  'just the code is fine, no need for comments',
 ];
 
 const BOB_SETUP = [
-  'My name is Bob. I love detailed explanations with examples.',
-  'I work exclusively with Python. Always show Python code.',
-  'Always format code with comments explaining each important line.',
+  "what's the difference between asyncio and threading in Python?",
+  'interesting, can you go deeper on the GIL and why it matters for IO-bound tasks?',
+  'can you show me a complete Python example with comments explaining each part?',
+  'I want to make sure I understand — can you elaborate on when to use one vs the other?',
 ];
 
 const TEST_QUESTIONS = [
@@ -293,20 +297,20 @@ async function main(): Promise<void> {
   const aliceAgent = createAgent(provider, 'alice');
   const bobAgent   = createAgent(provider, 'bob');
 
-  console.log(`${label('alice>', c.cyan)} Setting up profile...\n`);
+  console.log(`${label('alice>', c.cyan)} Natural conversation (profile forms organically)...\n`);
   for (const msg of ALICE_SETUP) {
-    process.stdout.write(`  ${c.dim}→ ${msg}${c.reset}\n`);
+    process.stdout.write(`  ${c.dim}you: ${msg}${c.reset}\n`);
     let response = '';
     await aliceAgent.chat(msg, chunk => { response += chunk; });
-    process.stdout.write(`  ${c.dim}← ${response.slice(0, 100).replace(/\n/g, ' ')}...${c.reset}\n`);
+    process.stdout.write(`  ${c.dim}bot: ${response.slice(0, 120).replace(/\n/g, ' ')}…${c.reset}\n\n`);
   }
 
-  console.log(`\n${label('bob>', c.yellow)} Setting up profile...\n`);
+  console.log(`${label('bob>', c.yellow)} Natural conversation (profile forms organically)...\n`);
   for (const msg of BOB_SETUP) {
-    process.stdout.write(`  ${c.dim}→ ${msg}${c.reset}\n`);
+    process.stdout.write(`  ${c.dim}you: ${msg}${c.reset}\n`);
     let response = '';
     await bobAgent.chat(msg, chunk => { response += chunk; });
-    process.stdout.write(`  ${c.dim}← ${response.slice(0, 100).replace(/\n/g, ' ')}...${c.reset}\n`);
+    process.stdout.write(`  ${c.dim}bot: ${response.slice(0, 120).replace(/\n/g, ' ')}…${c.reset}\n\n`);
   }
 
   const aliceProfile = profileManager.load('alice');

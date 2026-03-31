@@ -36,9 +36,19 @@ Long-term memory rules:
 - Keep facts concise (one sentence each)
 
 Profile update rules:
-- ONLY update when the user EXPLICITLY states a preference (e.g., "answer briefly", "I use Python", "don't use markdown")
+- Update when the user expresses a preference — directly or through natural phrasing
+- Direct: "answer briefly", "I use Python", "don't use markdown"
+- Natural/indirect signals also count:
+  * "keep it short" / "just the gist" / "too long" → preferences.style: brief
+  * "can you elaborate" / "show me more" / "explain why" / "go deeper" → preferences.style: detailed
+  * "just the code" / "no explanation needed" → preferences.verbosity: low
+  * "with comments please" / "explain each step" → format.codeStyle: commented
+  * "no need for comments" / "clean version" → format.codeStyle: clean
+  * User asking a question using a specific language ("how do I do X in Python/TypeScript/Go") → constraints.preferredLanguage (only if consistent across messages, not a one-off)
+  * "plain text" / "no markdown" / "no formatting" → format.responseStructure: plain
+- Do NOT infer preferences from silence or neutral messages — only update on a clear signal
 - Supported fields: preferences.style (brief|detailed), preferences.tone (formal|casual), preferences.verbosity (low|medium|high), format.codeStyle (commented|clean), format.responseStructure (markdown|plain), constraints.preferredLanguage (string)
-- If no explicit preference detected, use empty object {}
+- If no preference signal detected, use empty object {}
 
 Respond ONLY with valid JSON (no other text):
 {"wm_update":{"goal":"...","steps":[...],"constraints":[...],"entities":[...]},"ltm_add":["fact1","fact2"],"profile_update":{"preferences.style":"brief"}}`;
