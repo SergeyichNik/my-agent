@@ -45,6 +45,19 @@ function printSeparator(): void {
   process.stdout.write(`\n${c.dim}${'─'.repeat(width)}${c.reset}\n\n`);
 }
 
+function startSpinner(msg: string): () => void {
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  let i = 0;
+  const render = () =>
+    process.stdout.write(`\r${c.bold}${c.yellow}${frames[i++ % frames.length]}${c.reset} ${msg}`);
+  render();
+  const timer = setInterval(render, 80);
+  return () => {
+    clearInterval(timer);
+    process.stdout.write('\x1b[2K\r');
+  };
+}
+
 // ── Scenario ──────────────────────────────────────────────────────────────────
 
 // Realistic conversations — preferences emerge naturally, not from explicit setup commands.
@@ -304,7 +317,7 @@ async function main(): Promise<void> {
   await Promise.all([
     (async () => {
       for (const msg of ALICE_SETUP) {
-        setupRenderer.append(0, `${c.dim}you: ${msg}${c.reset}\n`);
+        setupRenderer.append(0, `you: ${msg}\n`);
         await aliceAgent.chat(msg, chunk => setupRenderer.append(0, chunk));
         setupRenderer.append(0, '\n\n');
       }
@@ -312,7 +325,7 @@ async function main(): Promise<void> {
     })(),
     (async () => {
       for (const msg of BOB_SETUP) {
-        setupRenderer.append(1, `${c.dim}you: ${msg}${c.reset}\n`);
+        setupRenderer.append(1, `you: ${msg}\n`);
         await bobAgent.chat(msg, chunk => setupRenderer.append(1, chunk));
         setupRenderer.append(1, '\n\n');
       }
@@ -344,9 +357,13 @@ async function main(): Promise<void> {
   for (let i = 0; i < TEST_QUESTIONS.length; i++) {
     const { question, criterion } = TEST_QUESTIONS[i];
     printSeparator();
-    console.log(`${label(`Q${i + 1}/${TEST_QUESTIONS.length}`, c.bold + c.dim)}: ${label(question, c.bold)}\n`);
+    console.log(`${label(`Q${i + 1}/${TEST_QUESTIONS.length}`, c.bold + c.yellow)} ${label(question, c.bold)}\n`);
 
-    const renderer = new MultiColumnRenderer(['alice', 'bob'], [c.cyan, c.yellow]);
+    const colLabel = (user: string) => `${user}  [Q${i + 1}/${TEST_QUESTIONS.length}]`;
+    const renderer = new MultiColumnRenderer(
+      [colLabel('alice'), colLabel('bob')],
+      [c.cyan, c.yellow]
+    );
     const turnResult = {
       alice: '',
       bob: '',
@@ -375,13 +392,15 @@ async function main(): Promise<void> {
     const aliceResponse = turnResult.alice;
     const bobResponse   = turnResult.bob;
 
-    // Judge
-    process.stdout.write(`${c.bold}${c.yellow}◆ Судья оценивает…${c.reset}\n`);
+    // Judge with spinner
     let scores: PersonalizationScores | null = null;
+    const stopSpinner = startSpinner('Судья оценивает…');
     try {
       scores = await judgePersonalization(provider, question, aliceResponse, bobResponse, criterion);
+      stopSpinner();
       printPersonalizationTable(scores);
     } catch (err) {
+      stopSpinner();
       console.error(`${label('✗ Judge error:', c.red)} ${err}`);
     }
 

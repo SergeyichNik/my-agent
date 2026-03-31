@@ -1,6 +1,13 @@
 // MultiColumnRenderer: fixed-height viewport with side-by-side streaming columns
 // Uses pure ANSI escape codes, no external dependencies.
 
+// Strip ANSI escape codes so padEnd() measures visual width correctly.
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;]*[mGKHFJABCDsu]|\x1b[78]/g;
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_RE, '');
+}
+
 export class MultiColumnRenderer {
   private readonly buffers: string[][];
   private readonly done: boolean[];
@@ -17,13 +24,15 @@ export class MultiColumnRenderer {
     const n = names.length;
     const termWidth = process.stdout.columns || 120;
     this.colWidth = Math.max(20, Math.floor((termWidth - n - 1) / n));
-    this.viewportHeight = Math.max(10, Math.min(25, (process.stdout.rows || 30) - 6));
+    this.viewportHeight = Math.max(10, Math.min(20, (process.stdout.rows || 30) - 8));
     this.buffers = names.map(() => ['']);
     this.done = names.map(() => false);
     this.doneTokens = names.map(() => undefined);
   }
 
   append(colIndex: number, text: string): void {
+    // Strip ANSI codes before storing — padEnd() must work on visual width
+    text = stripAnsi(text);
     const inner = this.colWidth - 2;
     const buf = this.buffers[colIndex];
     const segments = text.split('\n');
@@ -50,7 +59,8 @@ export class MultiColumnRenderer {
   markDone(colIndex: number, tokens?: number): void {
     this.done[colIndex] = true;
     this.doneTokens[colIndex] = tokens;
-    this.render();
+    // Go through scheduleRender to avoid double-render with pending setImmediate
+    this.scheduleRender();
   }
 
   clear(): void {
