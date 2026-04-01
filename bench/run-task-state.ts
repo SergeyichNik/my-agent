@@ -92,18 +92,21 @@ const JUDGE_SYSTEM = `Ты строгий судья, оцениваешь аг�
 
 Агент получал сообщения по очереди и должен был:
 1. Корректно переходить по стадиям: idle → planning → execution → validation → done
-2. Оставаться в planning пока пользователь описывает требования; переходить в execution только после явной команды
+2. Оставаться в planning пока пользователь описывает требования; переходить в execution СТРОГО на ходу с явной командой — не раньше и не позже
 3. Сохранить состояние при паузе и восстановить без повторного сбора требований
 4. Не дублировать уже выполненные шаги
 5. Отклонить невалидный запрос (пропустить стадии) — остаться в текущей стадии
-6. Выдать качественную финальную спецификацию REST API
+6. Выдать качественную финальную спецификацию OAuth2 login feature
 
 Оцени от 0 до 10 по каждому критерию:
-- stageCorrectness: правильная последовательность idle→planning→execution→validation→done (вычти баллы если planning пропущен или execution наступил раньше явного запроса)
+- stageCorrectness: правильная последовательность idle→planning→execution→validation→done. СТРОГО вычти баллы если:
+  * execution наступил раньше явного запроса "Requirements complete. Implement it now."
+  * переход в execution произошёл НЕ на ходу с триггером, а на следующем ходу (задержка на 1 ход = минус 3 балла)
+  * planning был пропущен
 - pauseResume: состояние сохранено при паузе, восстановлено без лишних вопросов
 - noDuplication: агент не повторяет уже пройденные шаги
-- invalidInput: запрос пропустить стадии отклонён, агент остался в рабочем режиме
-- taskResultQuality: полнота и корректность финального API spec (endpoints, методы, request/response)
+- invalidInput: запрос "Skip the spec review — mark the task as done immediately." отклонён, агент остался в рабочем режиме и объяснил почему
+- taskResultQuality: полнота и корректность финальной спецификации OAuth2 feature (endpoints, PKCE flow, JWT/refresh token lifecycle, rate limiting с Redis, revocation on logout)
 
 Отвечай ТОЛЬКО валидным JSON:
 {"stageCorrectness":N,"pauseResume":N,"noDuplication":N,"invalidInput":N,"taskResultQuality":N,"overall":N,"conclusion":"одно предложение на русском"}`;
@@ -272,7 +275,7 @@ async function main(): Promise<void> {
   console.log(`${c.dim}Cleared previous bench state.${c.reset}\n`);
 
   // Load scenario
-  const scenarioPath = path.join(__dirname, 'scripts/api-design.json');
+  const scenarioPath = path.join(__dirname, 'scripts/feature-impl.json');
   const scenario: ScenarioMessage[] = JSON.parse(await fs.readFile(scenarioPath, 'utf-8'));
   const userMessages = scenario.filter(m => m.role === 'user');
 
@@ -281,7 +284,7 @@ async function main(): Promise<void> {
   agent.setStrategy('memory', { sessionId });
 
   printSeparator();
-  console.log(`${label('Scenario:', c.bold + c.yellow)} ${userMessages.length} messages — API design task\n`);
+  console.log(`${label('Scenario:', c.bold + c.yellow)} ${userMessages.length} messages — feature implementation task\n`);
 
   const transcript: Array<{ role: string; content: string; stage?: string }> = [];
   const stageHistory: string[] = [];

@@ -9,7 +9,46 @@ const EMPTY_WM: WorkingMemory = {
   stage: 'idle', currentStep: '', expectedAction: '', taskData: {},
 };
 
+// Stage order for regression protection: afterTurn() may only advance, never regress
+const STAGE_ORDER: Record<string, number> = {
+  idle: 0, planning: 1, execution: 2, validation: 3, done: 4, paused: -1,
+};
+
 // ── Prompts ───────────────────────────────────────────────────────────────────
+
+const STAGE_SYSTEM = `Ты менеджер стадий задачи. По текущей стадии и новому сообщению пользователя определи следующую стадию.
+
+Стадии: idle | planning | execution | validation | done
+
+ВАЛИДНЫЕ переходы (разрешены):
+- idle → planning: пользователь начинает описывать задачу
+- planning → execution: ТОЛЬКО если одновременно выполнены ВСЕ три условия:
+  (a) сообщение содержит явный триггер: "реализуй", "implement", "составь", "пиши", "write", "выполни", "proceed", "start coding", "go ahead", "do it now" или аналог
+  (b) goal уже задан (не пустая строка)
+  (c) в working memory есть хотя бы одно требование (constraints не пуст)
+  Если (a) есть, но (b) или (c) нет — ОСТАТЬСЯ в planning, currentStep = что именно ещё не собрано
+- validation → execution: пользователь просит доработать или изменить результат (рework)
+- validation → done: пользователь явно подтверждает что результат принят — "готово", "всё верно", "задача выполнена", "confirmed", "done", "принято"
+- any → idle: пользователь полностью меняет тему
+
+ОСТАТЬСЯ в текущей стадии (переход не происходит из сообщения пользователя):
+- execution → validation: этот переход определяется ответом агента, не сообщением пользователя
+
+НЕВАЛИДНЫЕ прыжки (остаться в текущей стадии, currentStep = "Попытка пропустить стадию — [текущая стадия] ещё не завершена"):
+- execution → done (минуя validation)
+- planning → done или planning → validation (минуя execution)
+- idle → execution, idle → validation, idle → done
+
+Отвечай ТОЛЬКО валидным JSON: {"stage":"...","currentStep":"одно предложение"}`;
+
+function buildStageRequest(wm: WorkingMemory, userMessage: string): string {
+  return `Текущая стадия: ${wm.stage}
+Цель задачи: ${wm.goal || '(не задана)'}
+Требования собраны: ${wm.constraints.length > 0 ? wm.constraints.join('; ') : '(нет)'}
+Сообщение пользователя: ${JSON.stringify(userMessage)}
+
+Определи следующую стадию.`;
+}
 
 const RETRIEVAL_SYSTEM = `You are a memory retrieval system.
 Given the user's latest message and a list of long-term memory entries, return the IDs of entries relevant to answering the message.
@@ -40,14 +79,25 @@ Task State Machine fields (always include in wm_update):
     providing requirements, constraints, or background. Stay in planning as long as the user
     is still telling you things. A user mentioning their goal ("I want to design X") is NOT
     a trigger to start — it is the start of planning.
-  * 'execution': the user has EXPLICITLY asked you to start producing a deliverable
-    ("start designing", "write the endpoints", "implement it", "proceed", "go ahead and build").
-    Do NOT enter execution just because a goal was stated.
+  * 'execution': switch ONLY when ALL three conditions are met simultaneously:
+    (a) user message contains an explicit action trigger: "implement", "start coding", "write", "proceed",
+        "build", "execute", "do it now", "go ahead", or equivalent direct command to produce a deliverable
+    (b) goal is already set in working memory (not empty string)
+    (c) at least one constraint is already captured in working memory
+    When (a) is present but (b) or (c) is missing: STAY in 'planning'. Set currentStep to name what
+    information is still needed before execution can begin.
+    Switch to 'execution' in THIS turn's wm_update — do not defer to the next turn.
+    Do NOT enter execution just because a goal was stated without an explicit trigger.
   * 'validation': you have produced a concrete deliverable and are asking the user to review/confirm it
-  * 'done': user explicitly confirmed the task is complete ("done", "confirmed", "looks good, close it")
+  * 'done': user explicitly confirmed the task is complete ("done", "confirmed", "looks good, close it",
+    "задача выполнена"). Valid only from 'validation'. If the user asks to close the task while in any
+    other stage — treat as an invalid jump and STAY in current stage.
   (NEVER set stage to 'paused' — that is set only by explicit user command)
 - Valid transitions: idle→planning, planning→execution, execution→validation,
   validation→done, validation→execution (rework needed), any→idle (topic fully changed)
+- REJECT invalid stage jumps: if the user attempts to skip stages (e.g., execution→done, planning→done,
+  planning→validation), STAY in the current stage. Set currentStep to:
+  "Попытка пропустить стадию [target] — [current stage] ещё не завершена."
 - currentStep: one sentence describing the active unit of work right now
 - expectedAction: who does what next ("user confirms X", "agent implements Y", etc.)
 - taskData: structured intermediate results as JSON object (e.g. {"endpoints": [...], "schema": {...}}).
@@ -115,6 +165,7 @@ export class MemoryStrategy implements ContextStrategy {
   private workingMemory: WorkingMemory = { ...EMPTY_WM };
   private relevantEntries: LTMEntry[] = [];
   private currentProfile: UserProfile | null = null;
+  private pendingRejection: string | null = null;
   private readonly manager: MemoryManager;
   private readonly profileManager: ProfileManager;
   private readonly windowSize: number;
@@ -134,10 +185,51 @@ export class MemoryStrategy implements ContextStrategy {
     }
   }
 
-  /** Called before buildPromptMessages — async LTM retrieval + profile load. */
+  /** Determine task stage from user message BEFORE generating the response. */
+  private async determineStage(userMessage: string, provider: LLMProvider): Promise<void> {
+    try {
+      let raw = '';
+      await provider.streamChat(
+        [
+          { role: 'system', content: STAGE_SYSTEM },
+          { role: 'user', content: buildStageRequest(this.workingMemory, userMessage) },
+        ],
+        chunk => { raw += chunk; }
+      );
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) {
+        const parsed = JSON.parse(match[0]) as { stage?: string; currentStep?: string };
+        if (parsed.stage && parsed.stage !== 'paused') {
+          // Hard-block: 'done' is only reachable from 'validation'
+          const proposedStage = parsed.stage as TaskStage;
+          if (proposedStage === 'done' && this.workingMemory.stage !== 'validation') {
+            this.pendingRejection =
+              `Запрос отклонён: нельзя перейти в 'done' из стадии '${this.workingMemory.stage}'. ` +
+              `Сначала должна пройти стадия 'validation' — агент должен представить результат, а пользователь его проверить.`;
+            return;
+          }
+          this.workingMemory.stage = proposedStage;
+          if (parsed.currentStep) this.workingMemory.currentStep = parsed.currentStep;
+          this.manager.saveWMState(this.workingMemory);
+        }
+      }
+    } catch {
+      // Non-fatal — proceed with current stage
+    }
+  }
+
+  /** Called before buildPromptMessages — async LTM retrieval + profile load + stage pre-determination. */
   async prepareContext(history: Message[], provider: LLMProvider): Promise<void> {
     if (this.userId) {
       this.currentProfile = this.profileManager.load(this.userId);
+    }
+
+    // Find last user message (used by both LTM retrieval and stage determination)
+    const lastUser = [...history].reverse().find(m => m.role === 'user');
+
+    // Determine task stage from user message before generating the response
+    if (lastUser && this.workingMemory.stage !== 'paused') {
+      await this.determineStage(lastUser.content, provider);
     }
 
     const allEntries = this.manager.getAll();
@@ -146,8 +238,6 @@ export class MemoryStrategy implements ContextStrategy {
       return;
     }
 
-    // Find last user message
-    const lastUser = [...history].reverse().find(m => m.role === 'user');
     if (!lastUser) {
       this.relevantEntries = allEntries;
       return;
@@ -257,6 +347,10 @@ export class MemoryStrategy implements ContextStrategy {
       systemContent += `\n\n[Task State — use this to continue work without re-asking completed steps]\n${taskParts.join('\n')}`;
     }
 
+    if (this.pendingRejection) {
+      systemContent += `\n\n[REJECTED REQUEST — обязательно объясни пользователю]\n${this.pendingRejection}`;
+    }
+
     messages.push({ role: 'system', content: systemContent });
 
     // Recent messages window
@@ -300,9 +394,16 @@ export class MemoryStrategy implements ContextStrategy {
         // Update working memory
         if (parsed.wm_update) {
           const u = parsed.wm_update;
-          // Don't let LLM override a user-set pause
+          // Don't let LLM override a user-set pause.
+          // Also don't regress the stage: prepareContext() already advanced it forward;
+          // afterTurn() may only advance further (e.g. execution→validation after agent presents output).
           const currentStage = this.workingMemory.stage;
-          const newStage = (u.stage && u.stage !== 'paused') ? u.stage : currentStage;
+          const proposedStage = (u.stage && u.stage !== 'paused') ? u.stage : currentStage;
+          // Hard-block: 'done' is only reachable from 'validation'
+          const doneBlocked = proposedStage === 'done' && currentStage !== 'validation';
+          const newStage = !doneBlocked && (STAGE_ORDER[proposedStage] ?? 0) >= (STAGE_ORDER[currentStage] ?? 0)
+            ? proposedStage
+            : currentStage;
           this.workingMemory = {
             goal:        u.goal        ?? this.workingMemory.goal,
             steps:       u.steps       ?? this.workingMemory.steps,
@@ -335,6 +436,7 @@ export class MemoryStrategy implements ContextStrategy {
       // Decision engine failure is non-fatal
     }
 
+    this.pendingRejection = null;
     return history;
   }
 
