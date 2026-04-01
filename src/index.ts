@@ -10,17 +10,20 @@ import { LMStudioProvider } from './providers/lmstudio';
 import { JsonSessionStorage } from './storage/json';
 import { MemoryStrategy } from './strategies/memory';
 import { LLMProvider, Session } from './types';
+import { initStatusBar, updateStatusBar, destroyStatusBar } from './ui/status-bar';
+import { renderMarkdown } from './ui/markdown';
 
 const MEMORY_DIR = path.join(__dirname, '../memory');
 
 const c = {
-  reset:  '\x1b[0m',
-  bold:   '\x1b[1m',
-  dim:    '\x1b[2m',
-  cyan:   '\x1b[36m',
-  yellow: '\x1b[33m',
-  green:  '\x1b[32m',
-  red:    '\x1b[31m',
+  reset:   '\x1b[0m',
+  bold:    '\x1b[1m',
+  dim:     '\x1b[2m',
+  cyan:    '\x1b[36m',
+  yellow:  '\x1b[33m',
+  green:   '\x1b[32m',
+  red:     '\x1b[31m',
+  magenta: '\x1b[35m',
 };
 
 const CONTEXT_WINDOWS: Record<string, number> = {
@@ -68,6 +71,21 @@ function startSpinner(): () => void {
 function printSeparator(): void {
   const width = Math.min(process.stdout.columns ?? 60, 60);
   process.stdout.write(`${c.dim}${'─'.repeat(width)}${c.reset}\n\n`);
+}
+
+function printTurnHeader(): void {
+  const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const width = Math.min(process.stdout.columns ?? 60, 72);
+  const tag = ` [${ts}] `;
+  const right = Math.max(0, width - 3 - tag.length);
+  process.stdout.write(`\n${c.dim}───${tag}${'─'.repeat(right)}${c.reset}\n`);
+}
+
+function getStage(agent: Agent): import('./types').TaskStage | 'idle' {
+  try {
+    if (agent.activeStrategy === 'memory') return agent.taskStatus().stage;
+  } catch { /* not memory strategy */ }
+  return 'idle';
 }
 
 function promptNewSession(rl: readline.Interface): Promise<Session> {
@@ -162,6 +180,14 @@ async function main() {
     : CONTEXT_WINDOWS[activeModel] ?? null;
   let lastPromptTokens: number | null = null;
 
+  // Init status bar before any scrolling output
+  initStatusBar({
+    strategy: agent.activeStrategy,
+    stage: getStage(agent),
+    tokensSession: session.totalTokensUsed,
+    model: activeModel,
+  });
+
   const msgCount = session.messages.length;
   const countStr = msgCount > 0 ? ` ${label(`· ${msgCount} messages loaded`, c.dim)}` : '';
   const userStr = userId ? ` ${label(`· user: ${userId}`, c.yellow)}` : '';
@@ -198,18 +224,20 @@ async function main() {
     process.stdout.write('\n');
 
     const stopSpinner = startSpinner();
-    let headerPrinted = false;
+    let responseBuffer = '';
 
     try {
+      // Silent accumulation — spinner runs until stream completes
       const usage = await agent.chat(input, (chunk) => {
-        if (!headerPrinted) {
-          headerPrinted = true;
-          stopSpinner();
-          process.stdout.write(`${label('agent:', c.bold + c.cyan)}\n`);
-        }
-        process.stdout.write(chunk);
+        responseBuffer += chunk;
       });
+
+      stopSpinner();
+      printTurnHeader();
+      process.stdout.write(`${label('agent:', c.bold + c.cyan)}\n`);
+      process.stdout.write(renderMarkdown(responseBuffer));
       process.stdout.write('\n');
+
       if (usage) {
         const sessionTotal = agent.totalTokensUsed;
 
@@ -229,6 +257,12 @@ async function main() {
         process.stdout.write(
           `${c.dim}[tokens] prompt: ${usage.prompt_tokens} | completion: ${usage.completion_tokens} | total: ${usage.total_tokens}${ctxPart}${growthPart} | session: ${sessionTotal.toLocaleString()}${c.reset}\n`
         );
+
+        updateStatusBar({
+          strategy: agent.activeStrategy,
+          stage: getStage(agent),
+          tokensSession: sessionTotal,
+        });
       }
       printSeparator();
     } catch (err) {
@@ -260,20 +294,25 @@ async function main() {
       } else if (sub === 'window') {
         const n = (!arg || isNaN(arg)) ? undefined : arg;
         agent.setStrategy('window', { windowSize: n });
+        updateStatusBar({ strategy: agent.activeStrategy, stage: getStage(agent) });
         console.log(`${label('◆ Strategy:', c.bold + c.cyan)} ${label(agent.activeStrategyDescription, c.bold)}`);
       } else if (sub === 'facts') {
         const n = (!arg || isNaN(arg)) ? undefined : arg;
         agent.setStrategy('facts', { windowSize: n });
+        updateStatusBar({ strategy: agent.activeStrategy, stage: getStage(agent) });
         console.log(`${label('◆ Strategy:', c.bold + c.cyan)} ${label(agent.activeStrategyDescription, c.bold)}`);
       } else if (sub === 'branch') {
         agent.setStrategy('branch');
+        updateStatusBar({ strategy: agent.activeStrategy, stage: getStage(agent) });
         console.log(`${label('◆ Strategy:', c.bold + c.cyan)} ${label(agent.activeStrategyDescription, c.bold)}`);
         console.log(`  ${label('Use /branch save|list|load <name> to manage branches.', c.dim)}`);
       } else if (sub === 'rolling') {
         agent.setStrategy('rolling');
+        updateStatusBar({ strategy: agent.activeStrategy, stage: getStage(agent) });
         console.log(`${label('◆ Strategy:', c.bold + c.cyan)} ${label(agent.activeStrategyDescription, c.bold)}`);
       } else if (sub === 'memory') {
         agent.setStrategy('memory', { sessionId: session.id, userId: userId });
+        updateStatusBar({ strategy: agent.activeStrategy, stage: getStage(agent) });
         console.log(`${label('◆ Strategy:', c.bold + c.cyan)} ${label(agent.activeStrategyDescription, c.bold)}`);
         console.log(`  ${label('Long-term memory persists across sessions. Run bench/watch-memory.ts to inspect layers.', c.dim)}`);
       } else {
@@ -343,13 +382,16 @@ async function main() {
           }
         } else if (sub === 'pause') {
           agent.taskPause();
+          updateStatusBar({ stage: getStage(agent) });
           console.log(`${label('◆ Task paused.', c.bold + c.yellow)} Use /task resume to continue.`);
         } else if (sub === 'resume') {
           agent.taskResume();
           const state = agent.taskStatus();
+          updateStatusBar({ stage: state.stage });
           console.log(`${label('◆ Task resumed.', c.bold + c.green)} Stage: ${label(state.stage, c.bold)}`);
         } else if (sub === 'reset') {
           agent.taskReset();
+          updateStatusBar({ stage: 'idle' });
           console.log(`${label('◆ Task state reset to idle.', c.bold + c.green)}`);
         } else {
           console.log(`Usage: ${label('/task status|pause|resume|reset', c.bold)}`);
@@ -447,7 +489,8 @@ async function main() {
     }
   });
 
-  rl.on('close', () => process.exit(0));
+  rl.on('close', () => { destroyStatusBar(); process.exit(0); });
+  process.on('SIGINT', () => { destroyStatusBar(); process.stdout.write('\n'); process.exit(0); });
 }
 
 main().catch(err => {
