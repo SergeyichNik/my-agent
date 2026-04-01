@@ -36,10 +36,15 @@ Working memory fields:
 Task State Machine fields (always include in wm_update):
 - stage: current phase — one of: 'idle'|'planning'|'execution'|'validation'|'done'
   * 'idle': no active task yet
-  * 'planning': gathering requirements, clarifying scope, asking questions
-  * 'execution': actively building, designing, or implementing
-  * 'validation': deliverable produced, awaiting user confirmation or review
-  * 'done': user confirmed task is complete
+  * 'planning': user is DESCRIBING what they want — stating goals, answering clarifying questions,
+    providing requirements, constraints, or background. Stay in planning as long as the user
+    is still telling you things. A user mentioning their goal ("I want to design X") is NOT
+    a trigger to start — it is the start of planning.
+  * 'execution': the user has EXPLICITLY asked you to start producing a deliverable
+    ("start designing", "write the endpoints", "implement it", "proceed", "go ahead and build").
+    Do NOT enter execution just because a goal was stated.
+  * 'validation': you have produced a concrete deliverable and are asking the user to review/confirm it
+  * 'done': user explicitly confirmed the task is complete ("done", "confirmed", "looks good, close it")
   (NEVER set stage to 'paused' — that is set only by explicit user command)
 - Valid transitions: idle→planning, planning→execution, execution→validation,
   validation→done, validation→execution (rework needed), any→idle (topic fully changed)

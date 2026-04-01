@@ -17,7 +17,7 @@ import { config } from '../src/config';
 import { Agent } from '../src/agent';
 import { DeepSeekProvider } from '../src/providers/deepseek';
 import { LMStudioProvider } from '../src/providers/lmstudio';
-import { LLMProvider, TaskStage, WorkingMemory } from '../src/types';
+import { LLMProvider } from '../src/types';
 
 // ── Colors ────────────────────────────────────────────────────────────────────
 
@@ -54,6 +54,20 @@ function startSpinner(msg: string): () => void {
   };
 }
 
+const STAGE_COLORS: Record<string, string> = {
+  idle:       c.dim,
+  planning:   c.cyan,
+  execution:  c.yellow,
+  validation: c.magenta,
+  done:       c.green,
+  paused:     c.red,
+};
+
+function stageLabel(stage: string): string {
+  const col = STAGE_COLORS[stage] ?? c.dim;
+  return `${col}${c.bold}${stage}${c.reset}`;
+}
+
 // ── Scenario ──────────────────────────────────────────────────────────────────
 
 interface ScenarioMessage {
@@ -65,30 +79,31 @@ interface ScenarioMessage {
 // ── Judge ─────────────────────────────────────────────────────────────────────
 
 interface TaskStateScores {
-  stageCorrectness:   number; // 0-10: stages progressed in correct order
-  pauseResume:        number; // 0-10: state preserved across pause/resume
-  noDuplication:      number; // 0-10: no repeated completed steps
-  invalidInput:       number; // 0-10: agent stayed in correct stage on bad jump
-  taskResultQuality:  number; // 0-10: final API spec completeness
-  overall:            number;
-  conclusion:         string;
+  stageCorrectness:  number;
+  pauseResume:       number;
+  noDuplication:     number;
+  invalidInput:      number;
+  taskResultQuality: number;
+  overall:           number;
+  conclusion:        string;
 }
 
 const JUDGE_SYSTEM = `Ты строгий судья, оцениваешь агента с машиной состояний задачи (Task State Machine).
 
 Агент получал сообщения по очереди и должен был:
 1. Корректно переходить по стадиям: idle → planning → execution → validation → done
-2. Сохранить состояние при паузе и восстановить его при возобновлении без повторного сбора требований
-3. Не дублировать уже выполненные шаги
-4. Правильно обработать невалидный запрос (пропустить стадии, уйти в продакшн) — остаться в текущей стадии
-5. Выдать качественную финальную спецификацию REST API (endpoints, методы, тела запросов/ответов)
+2. Оставаться в planning пока пользователь описывает требования; переходить в execution только после явной команды
+3. Сохранить состояние при паузе и восстановить без повторного сбора требований
+4. Не дублировать уже выполненные шаги
+5. Отклонить невалидный запрос (пропустить стадии) — остаться в текущей стадии
+6. Выдать качественную финальную спецификацию REST API
 
 Оцени от 0 до 10 по каждому критерию:
-- stageCorrectness: правильная последовательность стадий
-- pauseResume: корректное восстановление без повторения уже выясненного
+- stageCorrectness: правильная последовательность idle→planning→execution→validation→done (вычти баллы если planning пропущен или execution наступил раньше явного запроса)
+- pauseResume: состояние сохранено при паузе, восстановлено без лишних вопросов
 - noDuplication: агент не повторяет уже пройденные шаги
-- invalidInput: агент отклонил запрос пропустить стадии и остался в рабочем режиме
-- taskResultQuality: полнота и корректность финального API spec
+- invalidInput: запрос пропустить стадии отклонён, агент остался в рабочем режиме
+- taskResultQuality: полнота и корректность финального API spec (endpoints, методы, request/response)
 
 Отвечай ТОЛЬКО валидным JSON:
 {"stageCorrectness":N,"pauseResume":N,"noDuplication":N,"invalidInput":N,"taskResultQuality":N,"overall":N,"conclusion":"одно предложение на русском"}`;
@@ -103,22 +118,22 @@ async function judgeTaskState(
 ): Promise<TaskStateScores> {
   const transcriptStr = transcript.map((m, i) => {
     const stageTag = m.stage ? ` [stage: ${m.stage}]` : '';
-    return `${i + 1}. [${m.role}${stageTag}]: ${m.content.slice(0, 300)}`;
+    return `${i + 1}. [${m.role}${stageTag}]: ${m.content.slice(0, 400)}`;
   }).join('\n\n');
 
-  const userPrompt = `История диалога (с зафиксированными стадиями агента):
+  const userPrompt = `История диалога (с зафиксированными стадиями агента после каждого хода):
 ${transcriptStr}
 
-Последовательность стадий (зафиксировано после каждого хода): ${stageHistory.join(' → ')}
+Последовательность стадий: ${stageHistory.join(' → ')}
 
 Состояние при паузе (JSON):
 ${pauseStateJson}
 
 Первый ответ после возобновления (resume):
-${resumeResponse.slice(0, 500)}
+${resumeResponse.slice(0, 600)}
 
 Финальная спецификация API:
-${finalSpec.slice(0, 1000)}`;
+${finalSpec.slice(0, 1200)}`;
 
   let raw = '';
   await provider.streamChat(
@@ -160,8 +175,8 @@ function scoreColor(n: number): string {
 }
 
 function printScoreTable(scores: TaskStateScores): void {
-  const colW = 30;
-  const scoreW = 10;
+  const colW = 32;
+  const scoreW = 8;
   const innerWidth = colW + scoreW + 4;
 
   const title = ' ◆ СУДЬЯ — TASK STATE MACHINE ';
@@ -174,10 +189,10 @@ function printScoreTable(scores: TaskStateScores): void {
   process.stdout.write(div + '\n');
 
   const rows: [string, number][] = [
-    ['Stage correctness (стадии)',    scores.stageCorrectness],
-    ['Pause/Resume (сохранение)',     scores.pauseResume],
-    ['No duplication (нет повторов)', scores.noDuplication],
-    ['Invalid input (отклонение)',    scores.invalidInput],
+    ['Stage correctness (стадии)',     scores.stageCorrectness],
+    ['Pause/Resume (сохранение)',      scores.pauseResume],
+    ['No duplication (нет повторов)',  scores.noDuplication],
+    ['Invalid input (отклонение)',     scores.invalidInput],
     ['Task result quality (качество)', scores.taskResultQuality],
   ];
 
@@ -222,14 +237,14 @@ async function main(): Promise<void> {
   // Load scenario
   const scenarioPath = path.join(__dirname, 'scripts/api-design.json');
   const scenario: ScenarioMessage[] = JSON.parse(await fs.readFile(scenarioPath, 'utf-8'));
+  const userMessages = scenario.filter(m => m.role === 'user');
 
   // Create agent with memory strategy
   const agent = new Agent(provider, undefined, undefined, undefined);
   agent.setStrategy('memory', { sessionId });
 
-  // Run scenario
   printSeparator();
-  console.log(`${label('Running scenario:', c.bold + c.yellow)} ${scenario.filter(m => m.role === 'user').length} user messages\n`);
+  console.log(`${label('Scenario:', c.bold + c.yellow)} ${userMessages.length} messages — API design task\n`);
 
   const transcript: Array<{ role: string; content: string; stage?: string }> = [];
   const stageHistory: string[] = [];
@@ -238,45 +253,58 @@ async function main(): Promise<void> {
   let finalSpec = '';
   let pauseInjected = false;
   let postPauseCount = 0;
+  let turnIndex = 0;
 
   for (let i = 0; i < scenario.length; i++) {
     const msg = scenario[i];
     if (msg.role !== 'user') continue;
+    turnIndex++;
+
+    printSeparator();
 
     // Inject pause before this message if flagged
     if (msg._inject_pause_before && !pauseInjected) {
       agent.taskPause();
       const state = agent.taskStatus();
       pauseStateJson = JSON.stringify(state, null, 2);
-      console.log(`\n${label('⏸ Task PAUSED', c.bold + c.yellow)} — stage: ${state.stage}, step: ${state.currentStep}`);
-      console.log(`${c.dim}State saved: ${pauseStateJson}${c.reset}\n`);
+      process.stdout.write(`${label('⏸  PAUSE', c.bold + c.yellow)}  stage was: ${stageLabel(state.stage)}\n`);
+      process.stdout.write(`${c.dim}${pauseStateJson}${c.reset}\n`);
 
-      // Resume immediately (simulating a new session start)
       agent.taskResume();
       const resumed = agent.taskStatus();
-      console.log(`${label('▶ Task RESUMED', c.bold + c.green)} — stage: ${resumed.stage}\n`);
+      process.stdout.write(`${label('▶  RESUME', c.bold + c.green)}  stage restored: ${stageLabel(resumed.stage)}\n`);
       pauseInjected = true;
+      printSeparator();
     }
 
-    const msgLabel = `[${i + 1}/${scenario.length}] ${msg.content.slice(0, 60)}${msg.content.length > 60 ? '…' : ''}`;
-    const stopSpinner = startSpinner(msgLabel);
+    // Print user message
+    process.stdout.write(`${label(`[${turnIndex}/${userMessages.length}] you:`, c.bold + c.dim)}\n${msg.content}\n\n`);
+
+    // Stream agent response
+    process.stdout.write(`${label('agent:', c.bold + c.cyan)}\n`);
 
     let response = '';
+    let firstChunk = true;
     try {
-      await agent.chat(msg.content, chunk => { response += chunk; });
-      stopSpinner();
+      await agent.chat(msg.content, chunk => {
+        if (firstChunk) {
+          firstChunk = false;
+        }
+        response += chunk;
+        process.stdout.write(chunk);
+      });
+      process.stdout.write('\n');
     } catch (err) {
-      stopSpinner();
+      process.stdout.write('\n');
       console.error(`${label('✗', c.red)} ${err}`);
       continue;
     }
 
+    // Stage badge after response
     const state = agent.taskStatus();
     stageHistory.push(state.stage);
-
-    console.log(`${c.dim}[${i + 1}]${c.reset} ${c.bold}you:${c.reset} ${msg.content.slice(0, 80)}`);
-    console.log(`     ${c.dim}stage: ${state.stage} | step: ${(state.currentStep || '—').slice(0, 50)}${c.reset}`);
-    console.log(`     ${c.cyan}agent:${c.reset} ${response.slice(0, 120)}${response.length > 120 ? '…' : ''}\n`);
+    const stepStr = state.currentStep ? `  step: ${c.dim}${state.currentStep.slice(0, 50)}${c.reset}` : '';
+    process.stdout.write(`\n${c.dim}stage:${c.reset} ${stageLabel(state.stage)}${stepStr}\n`);
 
     transcript.push({ role: 'user', content: msg.content });
     transcript.push({ role: 'assistant', content: response, stage: state.stage });
@@ -287,22 +315,20 @@ async function main(): Promise<void> {
       postPauseCount++;
     }
 
-    // Capture final spec (last message)
-    if (i === scenario.length - 1 || (scenario[i + 1] && scenario[i + 1].role !== 'user')) {
-      finalSpec = response;
-    }
-    // Also capture second-to-last as potential spec
-    if (i === scenario.length - 2) {
+    // Capture final spec (last two messages are good candidates)
+    if (turnIndex >= userMessages.length - 1) {
       finalSpec = response;
     }
   }
 
-  // Get final state
+  // Final state summary
   const finalState = agent.taskStatus();
   stageHistory.push(finalState.stage);
 
-  console.log(`\n${label('◆ Stage progression:', c.bold + c.cyan)} ${stageHistory.join(' → ')}`);
-  console.log(`${label('◆ Final stage:', c.bold + c.cyan)} ${label(finalState.stage, c.bold)}\n`);
+  printSeparator();
+  process.stdout.write(`${label('Stage progression:', c.bold + c.cyan)}\n`);
+  process.stdout.write(stageHistory.map(s => stageLabel(s)).join(` ${c.dim}→${c.reset} `) + '\n');
+  process.stdout.write(`\n${label('Final stage:', c.bold)} ${stageLabel(finalState.stage)}\n`);
 
   // Judge
   printSeparator();
@@ -339,10 +365,15 @@ async function main(): Promise<void> {
     md += `| **Overall** | **${scores.overall}/10** |\n\n`;
     md += `*${scores.conclusion}*\n\n`;
   }
+  md += `## Transcript\n\n`;
+  for (const m of transcript) {
+    const stageTag = m.stage ? ` \`[${m.stage}]\`` : '';
+    md += `**${m.role}**${stageTag}: ${m.content.slice(0, 500)}\n\n`;
+  }
   md += `## Final API Spec\n\n${finalSpec}\n`;
 
   await fs.writeFile(reportPath, md);
-  console.log(`${label('✓ Done', c.bold + c.green)} Report saved to ${reportPath}\n`);
+  console.log(`\n${label('✓ Done', c.bold + c.green)} Report saved to ${reportPath}\n`);
 }
 
 main().catch(err => {
