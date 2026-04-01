@@ -217,6 +217,43 @@ function printScoreTable(scores: TaskStateScores): void {
   }
 }
 
+// ── Single turn ───────────────────────────────────────────────────────────────
+
+async function runTurn(
+  agent: Agent,
+  content: string,
+  turnIndex: number,
+  total: number,
+  transcript: Array<{ role: string; content: string; stage?: string }>,
+  stageHistory: string[],
+): Promise<string> {
+  process.stdout.write(`${label(`[${turnIndex}/${total}] you:`, c.bold + c.dim)}\n${content}\n\n`);
+  process.stdout.write(`${label('agent:', c.bold + c.cyan)}\n`);
+
+  let response = '';
+  try {
+    await agent.chat(content, chunk => {
+      response += chunk;
+      process.stdout.write(chunk);
+    });
+    process.stdout.write('\n');
+  } catch (err) {
+    process.stdout.write('\n');
+    console.error(`${label('✗', c.red)} ${err}`);
+    return response;
+  }
+
+  const state = agent.taskStatus();
+  stageHistory.push(state.stage);
+  const stepStr = state.currentStep ? `  ${c.dim}step: ${state.currentStep.slice(0, 50)}${c.reset}` : '';
+  process.stdout.write(`\n${c.dim}stage:${c.reset} ${stageLabel(state.stage)}${stepStr}\n`);
+
+  transcript.push({ role: 'user', content });
+  transcript.push({ role: 'assistant', content: response, stage: state.stage });
+
+  return response;
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -251,73 +288,68 @@ async function main(): Promise<void> {
   let pauseStateJson = '{}';
   let resumeResponse = '';
   let finalSpec = '';
-  let pauseInjected = false;
-  let postPauseCount = 0;
   let turnIndex = 0;
 
-  for (let i = 0; i < scenario.length; i++) {
-    const msg = scenario[i];
+  // Split scenario at the pause point into two phases
+  const pauseIdx = scenario.findIndex(m => m._inject_pause_before);
+  const phase1 = scenario.slice(0, pauseIdx === -1 ? scenario.length : pauseIdx);
+  const phase2 = pauseIdx === -1 ? [] : scenario.slice(pauseIdx);
+
+  // ── Phase 1: Agent 1 — run until pause ──────────────────────────────────────
+
+  for (const msg of phase1) {
     if (msg.role !== 'user') continue;
     turnIndex++;
+    printSeparator();
+    await runTurn(agent, msg.content, turnIndex, userMessages.length, transcript, stageHistory);
+  }
+
+  if (phase2.length > 0) {
+    // Pause agent 1 — saves state to disk
+    agent.taskPause();
+    const pausedState = agent.taskStatus();
+    pauseStateJson = JSON.stringify(pausedState, null, 2);
 
     printSeparator();
+    process.stdout.write(`${label('⏸  SESSION END (pause)', c.bold + c.yellow)}\n`);
+    process.stdout.write(`${c.dim}Stage: ${pausedState.stage} | Step: ${pausedState.currentStep || '—'}${c.reset}\n`);
+    process.stdout.write(`${c.dim}State persisted to disk (wm-state.json)${c.reset}\n`);
 
-    // Inject pause before this message if flagged
-    if (msg._inject_pause_before && !pauseInjected) {
-      agent.taskPause();
-      const state = agent.taskStatus();
-      pauseStateJson = JSON.stringify(state, null, 2);
-      process.stdout.write(`${label('⏸  PAUSE', c.bold + c.yellow)}  stage was: ${stageLabel(state.stage)}\n`);
-      process.stdout.write(`${c.dim}${pauseStateJson}${c.reset}\n`);
+    // ── Phase 2: Agent 2 — fresh instance, reads WM from disk ─────────────────
 
-      agent.taskResume();
-      const resumed = agent.taskStatus();
-      process.stdout.write(`${label('▶  RESUME', c.bold + c.green)}  stage restored: ${stageLabel(resumed.stage)}\n`);
-      pauseInjected = true;
+    printSeparator();
+    process.stdout.write(`${label('▶  NEW SESSION (resume from disk)', c.bold + c.green)}\n`);
+
+    const agent2 = new Agent(provider, undefined, undefined, undefined);
+    agent2.setStrategy('memory', { sessionId }); // MemoryStrategy auto-loads wm-state.json
+
+    const restoredState = agent2.taskStatus();
+    process.stdout.write(`${c.dim}Loaded stage: ${restoredState.stage} | Step: ${restoredState.currentStep || '—'}${c.reset}\n`);
+
+    if (restoredState.stage !== 'paused') {
+      process.stdout.write(`${label('⚠ WM not restored correctly', c.bold + c.red)}\n`);
+    } else {
+      agent2.taskResume();
+      const resumed = agent2.taskStatus();
+      process.stdout.write(`${c.dim}Resumed to stage: ${resumed.stage}${c.reset}\n`);
+    }
+
+    for (const msg of phase2) {
+      if (msg.role !== 'user') continue;
+      turnIndex++;
       printSeparator();
+      const response = await runTurn(agent2, msg.content, turnIndex, userMessages.length, transcript, stageHistory);
+      if (turnIndex === phase1.filter(m => m.role === 'user').length + 1) {
+        resumeResponse = response;
+      }
+      if (turnIndex >= userMessages.length - 1) {
+        finalSpec = response;
+      }
     }
-
-    // Print user message
-    process.stdout.write(`${label(`[${turnIndex}/${userMessages.length}] you:`, c.bold + c.dim)}\n${msg.content}\n\n`);
-
-    // Stream agent response
-    process.stdout.write(`${label('agent:', c.bold + c.cyan)}\n`);
-
-    let response = '';
-    let firstChunk = true;
-    try {
-      await agent.chat(msg.content, chunk => {
-        if (firstChunk) {
-          firstChunk = false;
-        }
-        response += chunk;
-        process.stdout.write(chunk);
-      });
-      process.stdout.write('\n');
-    } catch (err) {
-      process.stdout.write('\n');
-      console.error(`${label('✗', c.red)} ${err}`);
-      continue;
-    }
-
-    // Stage badge after response
-    const state = agent.taskStatus();
-    stageHistory.push(state.stage);
-    const stepStr = state.currentStep ? `  step: ${c.dim}${state.currentStep.slice(0, 50)}${c.reset}` : '';
-    process.stdout.write(`\n${c.dim}stage:${c.reset} ${stageLabel(state.stage)}${stepStr}\n`);
-
-    transcript.push({ role: 'user', content: msg.content });
-    transcript.push({ role: 'assistant', content: response, stage: state.stage });
-
-    // Capture resume response (first message after pause)
-    if (pauseInjected && postPauseCount === 0) {
-      resumeResponse = response;
-      postPauseCount++;
-    }
-
-    // Capture final spec (last two messages are good candidates)
-    if (turnIndex >= userMessages.length - 1) {
-      finalSpec = response;
+  } else {
+    // No pause in scenario — capture final spec from last turns
+    for (let i = transcript.length - 1; i >= 0; i--) {
+      if (transcript[i].role === 'assistant') { finalSpec = transcript[i].content; break; }
     }
   }
 

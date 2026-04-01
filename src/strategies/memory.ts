@@ -127,6 +127,11 @@ export class MemoryStrategy implements ContextStrategy {
     this.userId = userId ?? null;
     this.manager = new MemoryManager(undefined, userId ?? undefined);
     this.profileManager = new ProfileManager();
+    // Restore persisted WM state from disk (enables cross-process resume)
+    const saved = this.manager.loadWMState();
+    if (saved) {
+      this.workingMemory = { ...EMPTY_WM, ...saved };
+    }
   }
 
   /** Called before buildPromptMessages — async LTM retrieval + profile load. */

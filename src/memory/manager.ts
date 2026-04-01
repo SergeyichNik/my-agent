@@ -45,6 +45,15 @@ export class MemoryManager {
     }
   }
 
+  loadWMState(): Partial<WorkingMemory> | null {
+    try {
+      const raw = fs.readFileSync(this.wmStatePath, 'utf-8');
+      return JSON.parse(raw) as Partial<WorkingMemory>;
+    } catch {
+      return null;
+    }
+  }
+
   getLogPath(): string {
     return this.logPath;
   }
