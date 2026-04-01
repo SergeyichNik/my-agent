@@ -168,7 +168,8 @@ async function main() {
   console.log(`\n${label('◆', c.bold + c.cyan)} ${label(session.name, c.bold)}${countStr}${userStr}`);
 
   console.log('\n' + label('Agent ready.', c.bold), 'Press Enter to send. Paste multi-line code — it sends as one message.');
-  console.log(`Type ${label('/ml', c.bold)} to toggle multi-line mode. ${label('/ctx [window|facts|branch|memory]', c.bold)} to switch strategy. ${label('/memory clear|show', c.bold)} for memory. Ctrl+C to exit.\n`);
+  console.log(`Type ${label('/ml', c.bold)} to toggle multi-line mode. ${label('/ctx [window|facts|branch|memory]', c.bold)} to switch strategy.`);
+  console.log(`${label('/task [status|pause|resume|reset]', c.bold)} for task state. ${label('/memory clear|show', c.bold)} for memory. Ctrl+C to exit.\n`);
 
   const buffer: string[] = [];
   let isProcessing = false;
@@ -315,6 +316,43 @@ async function main() {
           }
         } else {
           console.log(`Usage: ${label('/branch save|list|load <name>', c.bold)}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`${label('✗', c.bold + c.red)} ${label(msg, c.red)}`);
+      }
+      rl.setPrompt(getPrompt());
+      rl.prompt();
+      return;
+    }
+
+    // ── /task ─────────────────────────────────────────────────────────────────
+    if (line.trim().startsWith('/task')) {
+      const parts = line.trim().split(/\s+/);
+      const sub = parts[1];
+      try {
+        if (!sub || sub === 'status') {
+          const state = agent.taskStatus();
+          console.log(`${label('◆ Task State:', c.bold + c.cyan)}`);
+          console.log(`  Stage:    ${label(state.stage, c.bold)}`);
+          if (state.currentStep)    console.log(`  Step:     ${state.currentStep}`);
+          if (state.expectedAction) console.log(`  Expected: ${state.expectedAction}`);
+          const dataKeys = Object.keys(state.taskData).filter(k => !k.startsWith('_'));
+          if (dataKeys.length > 0) {
+            console.log(`  Data:     ${c.dim}${JSON.stringify(state.taskData)}${c.reset}`);
+          }
+        } else if (sub === 'pause') {
+          agent.taskPause();
+          console.log(`${label('◆ Task paused.', c.bold + c.yellow)} Use /task resume to continue.`);
+        } else if (sub === 'resume') {
+          agent.taskResume();
+          const state = agent.taskStatus();
+          console.log(`${label('◆ Task resumed.', c.bold + c.green)} Stage: ${label(state.stage, c.bold)}`);
+        } else if (sub === 'reset') {
+          agent.taskReset();
+          console.log(`${label('◆ Task state reset to idle.', c.bold + c.green)}`);
+        } else {
+          console.log(`Usage: ${label('/task status|pause|resume|reset', c.bold)}`);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

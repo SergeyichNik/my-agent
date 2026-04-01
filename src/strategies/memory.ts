@@ -1,10 +1,13 @@
-import { LLMProvider, LTMEntry, Message, StrategyState, UserProfile, WorkingMemory } from '../types';
+import { LLMProvider, LTMEntry, Message, StrategyState, TaskStage, UserProfile, WorkingMemory } from '../types';
 import { config } from '../config';
 import { ContextStrategy } from './context-strategy';
 import { MemoryManager } from '../memory/manager';
 import { ProfileManager } from '../profile/manager';
 
-const EMPTY_WM: WorkingMemory = { goal: '', steps: [], constraints: [], entities: [] };
+const EMPTY_WM: WorkingMemory = {
+  goal: '', steps: [], constraints: [], entities: [],
+  stage: 'idle', currentStep: '', expectedAction: '', taskData: {},
+};
 
 // ── Prompts ───────────────────────────────────────────────────────────────────
 
@@ -30,6 +33,21 @@ Working memory fields:
 - constraints: requirements and limitations
 - entities: key named things (files, people, services, etc.)
 
+Task State Machine fields (always include in wm_update):
+- stage: current phase — one of: 'idle'|'planning'|'execution'|'validation'|'done'
+  * 'idle': no active task yet
+  * 'planning': gathering requirements, clarifying scope, asking questions
+  * 'execution': actively building, designing, or implementing
+  * 'validation': deliverable produced, awaiting user confirmation or review
+  * 'done': user confirmed task is complete
+  (NEVER set stage to 'paused' — that is set only by explicit user command)
+- Valid transitions: idle→planning, planning→execution, execution→validation,
+  validation→done, validation→execution (rework needed), any→idle (topic fully changed)
+- currentStep: one sentence describing the active unit of work right now
+- expectedAction: who does what next ("user confirms X", "agent implements Y", etc.)
+- taskData: structured intermediate results as JSON object (e.g. {"endpoints": [...], "schema": {...}}).
+  Preserve existing taskData fields unless they are superseded by new information.
+
 Long-term memory rules:
 - Store ONLY durable facts: user preferences, recurring patterns, stable decisions
 - Do NOT store: temporary context, conversational filler, things already stored
@@ -53,7 +71,7 @@ Profile update rules:
 - If no preference signal detected, use empty object {}
 
 Respond ONLY with valid JSON (no other text):
-{"wm_update":{"goal":"...","steps":[...],"constraints":[...],"entities":[...]},"ltm_add":["fact1","fact2"],"profile_update":{"preferences.style":"brief"}}`;
+{"wm_update":{"goal":"...","steps":[...],"constraints":[...],"entities":[...],"stage":"planning","currentStep":"...","expectedAction":"...","taskData":{}},"ltm_add":["fact1","fact2"],"profile_update":{"preferences.style":"brief"}}`;
 
 function buildDecisionRequest(
   currentWM: WorkingMemory,
@@ -64,7 +82,16 @@ function buildDecisionRequest(
   const ltmList = existingLTM.length
     ? existingLTM.map(e => `- ${e.content}`).join('\n')
     : 'None';
-  const wmStr = JSON.stringify(currentWM);
+  const wmStr = JSON.stringify({
+    goal: currentWM.goal,
+    steps: currentWM.steps,
+    constraints: currentWM.constraints,
+    entities: currentWM.entities,
+    stage: currentWM.stage,
+    currentStep: currentWM.currentStep,
+    expectedAction: currentWM.expectedAction,
+    taskData: currentWM.taskData,
+  });
   return `Current working memory: ${wmStr}
 
 Existing long-term memory:
@@ -73,7 +100,7 @@ ${ltmList}
 Last user message: ${JSON.stringify(lastUser)}
 Last assistant message: ${JSON.stringify(lastAssistant.slice(0, 1000))}
 
-Update working memory and identify new long-term facts.`;
+Update working memory (including task state) and identify new long-term facts.`;
 }
 
 // ── MemoryStrategy ────────────────────────────────────────────────────────────
@@ -208,6 +235,18 @@ export class MemoryStrategy implements ContextStrategy {
       systemContent += `\n\n[Working memory — current task state]\n${parts.join('\n')}`;
     }
 
+    const hasTaskState = wm.stage !== 'idle' || wm.currentStep || wm.expectedAction;
+    if (hasTaskState) {
+      const taskParts: string[] = [];
+      taskParts.push(`Stage: ${wm.stage}`);
+      if (wm.currentStep)    taskParts.push(`Current step: ${wm.currentStep}`);
+      if (wm.expectedAction) taskParts.push(`Expected next action: ${wm.expectedAction}`);
+      if (Object.keys(wm.taskData).length > 0) {
+        taskParts.push(`Task data: ${JSON.stringify(wm.taskData)}`);
+      }
+      systemContent += `\n\n[Task State — use this to continue work without re-asking completed steps]\n${taskParts.join('\n')}`;
+    }
+
     messages.push({ role: 'system', content: systemContent });
 
     // Recent messages window
@@ -251,11 +290,18 @@ export class MemoryStrategy implements ContextStrategy {
         // Update working memory
         if (parsed.wm_update) {
           const u = parsed.wm_update;
+          // Don't let LLM override a user-set pause
+          const currentStage = this.workingMemory.stage;
+          const newStage = (u.stage && u.stage !== 'paused') ? u.stage : currentStage;
           this.workingMemory = {
             goal:        u.goal        ?? this.workingMemory.goal,
             steps:       u.steps       ?? this.workingMemory.steps,
             constraints: u.constraints ?? this.workingMemory.constraints,
             entities:    u.entities    ?? this.workingMemory.entities,
+            stage:       currentStage === 'paused' ? 'paused' : newStage,
+            currentStep:    u.currentStep    ?? this.workingMemory.currentStep,
+            expectedAction: u.expectedAction ?? this.workingMemory.expectedAction,
+            taskData:    u.taskData    ?? this.workingMemory.taskData,
           };
           this.manager.saveWMState(this.workingMemory);
         }
@@ -299,5 +345,53 @@ export class MemoryStrategy implements ContextStrategy {
   /** Expose manager for bench/watch scripts. */
   getManager(): MemoryManager {
     return this.manager;
+  }
+
+  /** Pause the current task — saves pre-pause stage in taskData. */
+  pauseTask(): void {
+    if (this.workingMemory.stage === 'idle' || this.workingMemory.stage === 'done') return;
+    this.workingMemory = {
+      ...this.workingMemory,
+      taskData: { ...this.workingMemory.taskData, _prePauseStage: this.workingMemory.stage },
+      stage: 'paused',
+      expectedAction: 'user resumes task',
+    };
+    this.manager.saveWMState(this.workingMemory);
+  }
+
+  /** Resume from pause — restores pre-pause stage. */
+  resumeTask(): void {
+    if (this.workingMemory.stage !== 'paused') return;
+    const prePause = (this.workingMemory.taskData._prePauseStage as TaskStage | undefined) ?? 'execution';
+    const { _prePauseStage, ...restData } = this.workingMemory.taskData;
+    this.workingMemory = {
+      ...this.workingMemory,
+      stage: prePause,
+      taskData: restData,
+      expectedAction: '',
+    };
+    this.manager.saveWMState(this.workingMemory);
+  }
+
+  /** Reset task state to idle. */
+  resetTask(): void {
+    this.workingMemory = {
+      ...this.workingMemory,
+      stage: 'idle',
+      currentStep: '',
+      expectedAction: '',
+      taskData: {},
+    };
+    this.manager.saveWMState(this.workingMemory);
+  }
+
+  /** Returns current task state snapshot. */
+  getTaskState(): Pick<WorkingMemory, 'stage' | 'currentStep' | 'expectedAction' | 'taskData'> {
+    return {
+      stage: this.workingMemory.stage,
+      currentStep: this.workingMemory.currentStep,
+      expectedAction: this.workingMemory.expectedAction,
+      taskData: this.workingMemory.taskData,
+    };
   }
 }

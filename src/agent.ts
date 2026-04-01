@@ -10,6 +10,7 @@ import {
   createStrategy,
   createStrategyFromState,
 } from './strategies';
+import { MemoryStrategy } from './strategies/memory';
 
 export class Agent {
   private readonly provider: LLMProvider;
@@ -100,6 +101,20 @@ export class Agent {
     if (!messages) throw new Error(`Branch "${name}" not found.`);
     this.history = [{ role: 'system', content: SYSTEM_PROMPT }, ...messages];
   }
+
+  // ── Task State Machine facade ───────────────────────────────────────────────
+
+  private requireMemoryStrategy(): MemoryStrategy {
+    if (this.strategy.name !== 'memory') {
+      throw new Error('Task commands require memory strategy. Switch with /ctx memory first.');
+    }
+    return this.strategy as MemoryStrategy;
+  }
+
+  taskPause(): void  { this.requireMemoryStrategy().pauseTask(); }
+  taskResume(): void { this.requireMemoryStrategy().resumeTask(); }
+  taskReset(): void  { this.requireMemoryStrategy().resetTask(); }
+  taskStatus() { return this.requireMemoryStrategy().getTaskState(); }
 
   // ── Backward compat (used by bench/run.ts) ──────────────────────────────────
 

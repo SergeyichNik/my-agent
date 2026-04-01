@@ -87,6 +87,44 @@ function renderWM(wm: WorkingMemory): void {
   process.stdout.write(`${c.dim}└${'─'.repeat(boxWidth - 1)}${c.reset}\n`);
 }
 
+function renderTaskState(wm: WorkingMemory): void {
+  const termWidth = process.stdout.columns || 80;
+  const boxWidth = Math.min(termWidth - 2, 70);
+  const inner = boxWidth - 4;
+
+  const stageColors: Record<string, string> = {
+    idle:       c.dim,
+    planning:   c.cyan,
+    execution:  c.yellow,
+    validation: c.magenta,
+    done:       c.green,
+    paused:     c.red,
+  };
+
+  const title = 'TASK STATE';
+  const topBar = `┌─ ${c.bold}${c.magenta}${title}${c.reset}${c.dim} ${'─'.repeat(boxWidth - title.length - 4)}${c.reset}`;
+  process.stdout.write(topBar + '\n');
+
+  const stageColor = stageColors[wm.stage] ?? c.dim;
+  process.stdout.write(`${c.dim}│  ${c.reset}${c.bold}Stage:${c.reset}    ${stageColor}${wm.stage}${c.reset}\n`);
+
+  if (wm.currentStep) {
+    const text = `Step:     ${wm.currentStep}`;
+    process.stdout.write(`${c.dim}│  ${c.reset}${text.slice(0, inner)}\n`);
+  }
+  if (wm.expectedAction) {
+    const text = `Expected: ${wm.expectedAction}`;
+    process.stdout.write(`${c.dim}│  ${c.reset}${text.slice(0, inner)}\n`);
+  }
+  const dataKeys = Object.keys(wm.taskData).filter(k => !k.startsWith('_'));
+  if (dataKeys.length > 0) {
+    const dataStr = `Data:     ${JSON.stringify(wm.taskData)}`;
+    process.stdout.write(`${c.dim}│  ${c.reset}${c.dim}${dataStr.slice(0, inner)}${c.reset}\n`);
+  }
+
+  process.stdout.write(`${c.dim}└${'─'.repeat(boxWidth - 1)}${c.reset}\n`);
+}
+
 function renderLTM(log: LTMEntry[], allEntries: LTMEntry[]): void {
   const termWidth = process.stdout.columns || 80;
   const boxWidth = Math.min(termWidth - 2, 70);
@@ -115,7 +153,10 @@ function renderLTM(log: LTMEntry[], allEntries: LTMEntry[]): void {
   process.stdout.write(`${c.dim}└${'─'.repeat(boxWidth - 1)}${c.reset}\n`);
 }
 
-const EMPTY_WM: WorkingMemory = { goal: '', steps: [], constraints: [], entities: [] };
+const EMPTY_WM: WorkingMemory = {
+  goal: '', steps: [], constraints: [], entities: [],
+  stage: 'idle', currentStep: '', expectedAction: '', taskData: {},
+};
 
 function render(prevLineCount: number): number {
   const rawWM = readJSON<Partial<WorkingMemory>>(WM_PATH, {});
@@ -147,6 +188,8 @@ function render(prevLineCount: number): number {
   renderLTM(log, allEntries);
   process.stdout.write('\n');
   renderWM(wm);
+  process.stdout.write('\n');
+  renderTaskState(wm);
   process.stdout.write(`\n${c.dim}Watching ${MEMORY_DIR} — Ctrl+C to stop${c.reset}\n`);
   (process.stdout as any).write = origWrite;
 

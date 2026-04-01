@@ -20,11 +20,18 @@ export interface BranchData {
   createdAt: string; // ISO 8601
 }
 
+export type TaskStage = 'idle' | 'planning' | 'execution' | 'validation' | 'done' | 'paused';
+
 export interface WorkingMemory {
   goal: string;
   steps: string[];
   constraints: string[];
   entities: string[];
+  // Task State Machine
+  stage: TaskStage;
+  currentStep: string;
+  expectedAction: string;
+  taskData: Record<string, unknown>;
 }
 
 export interface LTMEntry {

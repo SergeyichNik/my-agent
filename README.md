@@ -146,16 +146,16 @@ Snapshot the conversation at any point and explore multiple independent directio
 ### Strategy 5: Memory (Layered Memory System)
 Three-layer memory architecture with cross-session persistence:
 - **Short-term**: last N messages (same as sliding window)
-- **Working memory**: current task state (goal / steps / constraints / entities), session-scoped
+- **Working memory**: current task state (goal / steps / constraints / entities) + **Task State Machine**, session-scoped
 - **Long-term memory**: facts that persist across sessions, stored in `memory/ltm.json`
 
 Switch: `/ctx memory`
 
 **Pipeline per turn:**
 1. LLM retrieval — selects relevant long-term facts for current message
-2. Context is built: LTM facts + working memory state + last N messages
+2. Context is built: LTM facts + working memory state + task state + last N messages
 3. Main LLM call (streaming response)
-4. Decision engine — extracts WM updates and new LTM facts from the completed turn
+4. Decision engine — extracts WM updates, new LTM facts, and task state transition from the completed turn
 
 **2 extra LLM calls per turn** (retrieval + decision engine). Long-term memory accumulates globally across all sessions using this strategy.
 
@@ -163,7 +163,30 @@ Switch: `/ctx memory`
 ```bash
 npm run watch-memory
 ```
-Shows real-time updates to both layers as the agent runs.
+Shows real-time updates to both layers and current task state as the agent runs.
+
+#### Task State Machine
+
+When using the Memory strategy, the agent tracks task progress through explicit stages:
+
+| Stage | Description |
+|-------|-------------|
+| `idle` | No active task |
+| `planning` | Gathering requirements, clarifying scope |
+| `execution` | Actively building/designing/implementing |
+| `validation` | Deliverable ready, awaiting user confirmation |
+| `done` | Task complete |
+| `paused` | Task paused by user command |
+
+The agent transitions automatically based on conversation context. Stage is injected into every system prompt so the agent never re-asks for already-collected requirements.
+
+**Task commands** (requires `/ctx memory`):
+```
+/task status   — show current stage, step, expected action, and task data
+/task pause    — pause the current task (saves stage for resume)
+/task resume   — resume from where you paused
+/task reset    — reset task state to idle
+```
 
 **Switching strategies is lossless** — full history is preserved in memory regardless of strategy.
 
@@ -258,6 +281,16 @@ Runs 3 sessions: session 1 introduces facts, sessions 2–3 test recall. Compare
 ```bash
 npm run watch-memory
 ```
+
+### Task State Machine benchmark
+Tests the FSM: stage transitions, pause/resume state preservation, invalid jump handling, and final result quality:
+
+```bash
+npm run bench:task-state        # DeepSeek
+npm run bench:task-state:lm     # LM Studio
+```
+
+Runs an API design scenario (8 messages) with a mid-session pause. Judge scores 5 criteria (0-10 each): stage correctness, pause/resume, no step duplication, invalid input rejection, task result quality. Reports saved to `bench/reports/task-state-<timestamp>.md`.
 
 ### Three-way strategy benchmark
 Compare all three context strategies (Sliding Window vs Sticky Facts vs Branching) on the same scenario:
